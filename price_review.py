@@ -166,14 +166,48 @@ def reviewer_notes(item, settings, current_row=None, lang="en"):
     return notes
 
 
+# Column the robot adds to the results with each product's Salesforce PricebookEntry Id.
+RESULTS_ID = "Salesforce Id"
+
+# Columns of the current-prices file kept in the saved review (Id + price for the export, the rest for filters).
+TEMPLATE_KEEP = (CODE, "ProductCode", "Id", "UnitPrice", "Precio de lista", NAME, "Sub-familia de Productos",
+                 "Familia de productos", "Linea de producto", "Categoria RepTrim", "Tipo GFN")
+
+
 class ReviewSession:
-    def __init__(self, results, template, settings=None, products=None, lang="en"):
-        self.results, self.template = Path(results).resolve(), Path(template).resolve()
+    def __init__(self, results, template=None, settings=None, products=None, lang="en"):
+        # template (the Salesforce current-prices file) is optional: results made by this version carry the
+        # Salesforce Id and current price of every product, and a saved review keeps its own copy.
+        self.results = Path(results).resolve()
+        self.template = Path(template).resolve() if template else None
         self.settings = dict(settings or {})
         self.lang = lang
         self.path = self.results.with_suffix(self.results.suffix + ".review.json")
-        self.fingerprint = self._fingerprint()
-        self.template_rows = read_current_rows(self.template)
+        from candidate_store import file_hash
+        results_hash = file_hash(self.results)
+        saved = None
+        if self.path.exists():
+            try:
+                saved = json.loads(self.path.read_text(encoding="utf-8"))
+            except (ValueError, OSError):
+                saved = None
+        summary_rows = table(self.results, "Summary")
+        if self.template is not None and self.template.is_file():
+            self.fingerprint = [results_hash, file_hash(self.template)]
+            self.template_rows = read_current_rows(self.template)
+        elif saved and (saved.get("fingerprint") or [None])[0] == results_hash and saved.get("template_rows"):
+            # The current-prices file was moved or deleted: use the copy saved with this review.
+            self.fingerprint = list(saved["fingerprint"])
+            self.template_rows = saved["template_rows"]
+        elif summary_rows and RESULTS_ID in summary_rows[0]:
+            # Results from this version: the Ids and current prices are in the results file itself.
+            self.fingerprint = [results_hash, "results"]
+            self.template_rows = [{CODE: code(r.get(CODE)), NAME: r.get(NAME), "Id": str(r.get(RESULTS_ID) or "").strip(),
+                                   "Precio de lista": number(r.get("Current BAP Price"))}
+                                  for r in summary_rows if code(r.get(CODE))]
+        else:
+            raise ValueError("This results file doesn't include the Salesforce Ids (it was made by an older version).\n"
+                             "Choose the current prices file downloaded from Salesforce.")
         self.base = {}
         for row in self.template_rows:
             key = code(row.get(CODE))
@@ -198,7 +232,7 @@ class ReviewSession:
             from candidate_store import CandidateStore
             self.candidates = CandidateStore(self.results, self.fingerprint[0])
         self.items = {}
-        for row in table(self.results, "Summary"):
+        for row in summary_rows:
             key = code(row.get(CODE))
             if not key or key in self.items:
                 raise ValueError(f"Missing or duplicate product code in results: {key}")
@@ -209,13 +243,15 @@ class ReviewSession:
             self.items[key] = {"row": row, "current": current, "counts": dict(counts),
                                "decision": "pending", "price": None, "note": "", "history": []}
         self.undo_stack = []
+        self.redo_stack = []
         self.original_rows = {key: deepcopy(item["row"]) for key, item in self.items.items()}
         for item in self.items.values():
             item["candidate_overrides"] = {}
         self.archived_review = None
-        if self.path.exists():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
-            if data.get("fingerprint") != self.fingerprint:
+        if saved is not None:
+            data = saved
+            # Decisions belong to the results file; a different current-prices file doesn't undo them.
+            if (data.get("fingerprint") or [None])[0] != self.fingerprint[0]:
                 self.archived_review = self.path.with_name(self.path.name + datetime.now(timezone.utc).strftime(".stale-%Y%m%d-%H%M%S-%f"))
                 self.path.rename(self.archived_review)
             else:
@@ -238,17 +274,17 @@ class ReviewSession:
             item["categories"]["Match group"] = str(item["row"].get("Generated Queries") or "").split("|")[0].strip()
         self.rescore()
 
-    def _fingerprint(self):
-        from candidate_store import file_hash
-        return [file_hash(path) for path in (self.results, self.template)]
-
     def rescore(self):
         for item in self.items.values():
             item["score"], item["points"], item["notes"] = confidence(item["row"], item["current"], item["counts"], self.settings, self.lang)
 
     def save(self):
         payload = {"fingerprint": self.fingerprint, "settings": self.settings,
-                   "template": str(self.template), "results": str(self.results),
+                   "template": str(self.template or ""), "results": str(self.results),
+                   # a copy of the Salesforce Ids and current prices, so the review and its export
+                   # still work if the current-prices file is moved or deleted
+                   "template_rows": [{k: row.get(k) for k in TEMPLATE_KEEP if row.get(k) not in (None, "")}
+                                     for row in self.template_rows if code(row.get(CODE)) in self.items],
                    "product_rows": {key: self.product_rows[key] for key in self.items if key in self.product_rows},
                    "policy_version": cfg.REVIEW_POLICY_VERSION,
                    "decisions": {key: {k: item[k] for k in ("decision", "price", "note", "history", "candidate_overrides", "candidate_review") if k in item}
@@ -350,6 +386,7 @@ class ReviewSession:
             self.items.update(before)
             raise
         self.undo_stack.append(before)
+        self.redo_stack.clear()   # a new change replaces anything that could be redone
 
     def decide(self, keys, decision, price=None, note=""):
         keys = list(keys)
@@ -357,12 +394,13 @@ class ReviewSession:
             raise ValueError("Unknown decision")
         if decision == "manual" and (len(keys) != 1 or not valid_price(price)):
             raise ValueError("Enter a positive price for one selected item.")
-        if decision == "accepted" and any(not valid_price(self.items[k]["row"].get(PRICE)) for k in keys):
-            raise ValueError("Selection contains items without a price. Enter those prices manually first.")
+        # Accepting a product with no proposed price keeps its current BAP price.
+        if decision == "accepted" and any(not valid_price(self.accept_price(k)) for k in keys):
+            raise ValueError("Selection contains items with no proposed or current price. Enter those prices manually first.")
         before = {key: deepcopy(self.items[key]) for key in keys}
         for key in keys:
             item = self.items[key]
-            value = price if decision == "manual" else item["row"].get(PRICE) if decision == "accepted" else None
+            value = price if decision == "manual" else self.accept_price(key) if decision == "accepted" else None
             item.update(decision=decision, price=round(number(value), cfg.REVIEW_PRICE_DECIMALS) if value is not None else None, note=note)
             item["history"].append({"at": datetime.now(timezone.utc).isoformat(), "decision": decision,
                                     "price": item["price"], "note": note})
@@ -372,6 +410,13 @@ class ReviewSession:
             self.items.update(before)
             raise
         self.undo_stack.append(before)
+        self.redo_stack.clear()   # a new change replaces anything that could be redone
+
+    def accept_price(self, key):
+        """The price "Accept" approves: the robot's proposal, or the current BAP price when there is none."""
+        item = self.items[key]
+        proposal = item["row"].get(PRICE)
+        return proposal if valid_price(proposal) else item["current"]
 
     def undo(self):
         if self.undo_stack:
@@ -384,6 +429,21 @@ class ReviewSession:
                 self.items.update(after)
                 raise
             self.undo_stack.pop()
+            self.redo_stack.append(after)
+
+    def redo(self):
+        if self.redo_stack:
+            state = self.redo_stack[-1]
+            before = {k: deepcopy(self.items[k]) for k in state}
+            self.items.update(deepcopy(state))
+            try:
+                self.rescore()
+                self.save()
+            except Exception:
+                self.items.update(before)
+                raise
+            self.redo_stack.pop()
+            self.undo_stack.append(before)
 
     def export(self, destination, include_unchanged=False):
         destination = Path(destination).resolve()
@@ -391,8 +451,10 @@ class ReviewSession:
             raise ValueError("Choose a new export filename; input files cannot be overwritten.")
         if destination.suffix.lower() != ".csv":
             raise ValueError("Choose a .csv filename for the Salesforce export.")
-        if self._fingerprint() != self.fingerprint:
-            raise ValueError("Input files changed during review. Reopen the review before exporting.")
+        # Ids and current prices are already loaded, so only a changed results file matters here.
+        from candidate_store import file_hash
+        if self.results.is_file() and file_hash(self.results) != self.fingerprint[0]:
+            raise ValueError("The results file changed during review. Reopen the review before exporting.")
         prices = {key: item["price"] for key, item in self.items.items()
                   if item["decision"] in ("accepted", "manual")}
         if any(not valid_price(price) for price in prices.values()):

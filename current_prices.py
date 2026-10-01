@@ -80,3 +80,64 @@ def read_current_rows(path):
 def read_current_prices(path):
     return {row["Código de producto"]: row["Precio de lista"] for row in read_current_rows(path)
             if row["Precio de lista"] is not None}
+
+
+# ---------------------------------------------------------------------------
+# Required columns — checked before a search starts (window and command line)
+# ---------------------------------------------------------------------------
+# Every column of the products sheet that the matcher reads.
+PRODUCT_REQUIRED_COLUMNS = (
+    "Código de producto", "Nombre del producto", "Unidad de Peso en KG", "Sub-familia de Productos",
+    "Linea de producto", "Familia de productos", "Descripción del producto", "Grupo de Productos",
+    "Categoria RepTrim",
+)
+# Current prices must be the Salesforce pricebook download: the reviewed
+# prices are exported by Salesforce Id, so a file without the Id column (like the old BAP current_prices.xlsx)
+# is refused. (Salesforce name, older BAP name) — either name is accepted for code and price.
+CURRENT_REQUIRED_COLUMNS = (("ProductCode", "Código de producto"), ("Id",), ("UnitPrice", "Precio de lista"))
+
+
+def _norm(value):
+    from matcher_core import normalize
+    return normalize(value)
+
+
+def product_columns_missing(path):
+    """Required columns missing from the products workbook ([] = fine). The robot reads the sheet/header row
+    that has the most of them (a MASTER-yyyy sheet first), like it does when searching."""
+    import re
+    from openpyxl import load_workbook
+    wanted = {_norm(c): c for c in PRODUCT_REQUIRED_COLUMNS}
+    wb = load_workbook(path, read_only=True, data_only=True)
+    try:
+        names = [s for s in wb.sheetnames if re.fullmatch(r"MASTER-\d{4}", s, re.I)]
+        names += [s for s in wb.sheetnames if s not in names]
+        best = set()
+        for name in names:
+            for row in wb[name].iter_rows(max_row=30, values_only=True):
+                found = {_norm(v) for v in row if v not in (None, "")} & set(wanted)
+                if len(found) > len(best):
+                    best = found
+            if len(best) == len(wanted):
+                break
+    finally:
+        wb.close()
+    return [wanted[k] for k in wanted if k not in best]
+
+
+def current_prices_columns_missing(path):
+    """Required columns missing from the current-prices file ([] = fine), as 'ProductCode / Código de producto'."""
+    path = Path(path)
+    if path.suffix.lower() == ".csv":
+        with path.open(encoding="utf-8-sig", newline="") as stream:
+            headers = next(csv.reader(stream), [])
+    else:
+        from openpyxl import load_workbook
+        wb = load_workbook(path, read_only=True, data_only=True)
+        try:
+            headers = next(wb.active.iter_rows(max_row=1, values_only=True), ())
+        finally:
+            wb.close()
+    present = {str(h or "").strip().casefold() for h in headers}
+    return [" / ".join(pair) for pair in CURRENT_REQUIRED_COLUMNS
+            if not any(name.casefold() in present for name in pair)]

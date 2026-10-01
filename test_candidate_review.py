@@ -80,8 +80,9 @@ class CandidateReviewTests(unittest.TestCase):
         self.assertIsNone(item["row"][PRICE])
         self.assertEqual(item["counts"], {})
         self.assertEqual(item["score"], 1)
-        with self.assertRaises(ValueError):
-            self.session.decide(["001"], "accepted")
+        # with no proposal left, accepting keeps the current BAP price
+        self.session.decide(["001"], "accepted")
+        self.assertEqual(self.session.items["001"]["price"], self.session.items["001"]["current"])
 
     def test_validation_and_save_failure_are_atomic(self):
         before = deepcopy(self.session.items["001"])
@@ -130,6 +131,49 @@ class CandidateReviewTests(unittest.TestCase):
         self.assertEqual(reopened.items["001"]["row"][PRICE], 12)
 
 
+class FriendlyReasonTests(unittest.TestCase):
+    def test_robot_notes_become_plain_language(self):
+        from candidate_review_ui import friendly_reason
+        cases = {
+            "accepted; size strategy=PREFERRED 0.80-1.25x; ratio=1.00":
+                ("Aceptado: tamaño parecido (100 % del producto BAP)", "Tamaño parecido (100 %)"),
+            "SIZE-DISTANT MATCH REMOVED: ratio=0.42; strategy=CLOSE 0.67-1.50x":
+                ("Tamaño muy distinto (42 % del producto BAP)", "Tamaño muy distinto (42 %)"),
+            "missing required identity word(s): bebe, licuado":
+                ("Le faltan palabras clave: bebe, licuado", "Le faltan palabras clave: bebe, licuado"),
+            "PRICE OUTLIER REMOVED: $2.10/kg vs median $8.00/kg (hard band $4.00-$16.00)":
+                ("Precio fuera de rango: $2.10/kg frente a la mediana $8.00/kg",) * 2,
+            "pet product: gato": ("Producto para mascotas: gato",) * 2,
+            "accepted; sold by weight (any quantity); size strategy=FALLBACK NEAREST RETAIL SIZE around 1.00x":
+                ("Aceptado: se vende por peso", "Se vende por peso"),
+            "something new the robot says": ("something new the robot says",) * 2,
+        }
+        for raw, (full, short) in cases.items():
+            self.assertEqual(friendly_reason(raw, "es"), full)
+            self.assertEqual(friendly_reason(raw, "es", short=True), short)
+        self.assertEqual(friendly_reason("pet product: gato", "en"), "Pet product: gato")
+
+
+class ProductLinkTests(unittest.TestCase):
+    def test_store_links_become_openable_addresses(self):
+        from candidate_review_ui import product_url
+        cases = [
+            ({"Store": "super99", "Product URL": "//www.super99.com/10096150-mortadela-gruesa-peso"},
+             "https://www.super99.com/10096150-mortadela-gruesa-peso"),
+            ({"Store": "superxtra", "Product URL": "https://www.superxtra.com/chorizos-kiener-de-cerdo-454-g/p"},
+             "https://www.superxtra.com/chorizos-kiener-de-cerdo-454-g/p"),
+            ({"Store": "rey", "Product URL": "/product/chorizo-31886050018"}, "https://www.smrey.com/product/chorizo-31886050018"),
+            ({"Store": "ribasmith", "Product URL": "https://www.ribasmith.com/search?q=CHORIZO+TIPO+ESPA%C3%83%C2%91OL+CHEDDAR"},
+             "https://www.ribasmith.com/search?q=CHORIZO+TIPO+ESPA%C3%91OL+CHEDDAR"),
+            ({"Store": "ribasmith", "Product URL": "https://www.ribasmith.com/search?q=JAM%C3%93N"},
+             "https://www.ribasmith.com/search?q=JAM%C3%93N"),
+            ({"Store": "rey", "Product URL": ""}, ""),
+            ({"Store": "rey", "Product URL": "javascript:alert(1)"}, ""),
+        ]
+        for candidate, expected in cases:
+            self.assertEqual(product_url(candidate), expected)
+
+
 class CandidateReviewUITests(unittest.TestCase):
     def test_filters_sort_shortcuts_and_drag_in_both_languages(self):
         fixture = candidate_fixture()
@@ -169,6 +213,13 @@ class CandidateReviewUITests(unittest.TestCase):
                 tree.event_generate("<Control-z>")
                 root.update()
                 self.assertFalse(dialog.overrides)
+                self.assertEqual(tree.get_children(), ("3",))   # stays listed until the list is refreshed
+                tree.event_generate("<Control-y>")              # redo
+                root.update()
+                self.assertTrue(dialog.overrides["3"])
+                tree.event_generate("<Control-z>")
+                root.update()
+                dialog.refresh_list()
                 self.assertFalse(tree.get_children())
                 dialog.clear_filters()
                 dialog.sort_by("ribasmith", "price")
@@ -196,8 +247,11 @@ class CandidateReviewUITests(unittest.TestCase):
                 self.assertEqual(tree.get_children(), ("2",))
                 tree.selection_set("2")
                 dialog.tree_key(SimpleNamespace(widget=tree, keysym="r", state=0))
-                self.assertFalse(tree.get_children())
+                self.assertEqual(tree.get_children(), ("2",))   # excluded, but still listed …
+                dialog.refresh_list()
+                self.assertFalse(tree.get_children())           # … until the list is refreshed
                 dialog.undo()
+                dialog.refresh_list()
                 self.assertEqual(tree.get_children(), ("2",))
                 dialog.clear_filters()
                 tree.selection_set("2")
@@ -253,7 +307,7 @@ class CandidateReviewUITests(unittest.TestCase):
                 dialog.choose(True)
                 dialog.apply()
                 self.assertEqual(review.price.get(), "13.00")
-                self.assertEqual(review.tree.set("001", "proposal"), "$13.00")
+                self.assertEqual(review.tree.set("001", "new"), "$13.00")
                 review.run(review.session.undo)
                 self.assertEqual(review.price.get(), "11.00")
                 review.destroy()

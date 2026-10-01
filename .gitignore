@@ -16,8 +16,11 @@ ui_products_cache.json
 # Generated exports and review decisions; keep input/ and input spreadsheets tracked.
 /output/
 /multi_store_price_matches*.xlsx
+/coincidencias_de_precios*.xlsx
 /multi_store_price_matches*.csv
+/coincidencias_de_precios*.csv
 /multi_store_performance_analysis*.xlsx
+/analisis_de_desempeno*.xlsx
 *.review.json
 *.review.json.*
 

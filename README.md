@@ -362,14 +362,14 @@ Only the flags above send a product to review. A 1,000-product test showed they 
 
 ## 6. Outputs
 
-### Results file (`multi_store_price_matches.xlsx` by default)
+### Results file (`coincidencias_de_precios.xlsx` by default)
 
 - **Summary** — one row per BAP product: search terms and confidence, stores used, per-store averages, matches kept/removed, target quantity, average/median/economy/min/max price per kg, the market value level used, **Estimated New Product Price**, price spread, quality flag, request errors.
 - **Candidates** — one row per store product checked: store, search term, ACCEPTED/REJECTED, product name, URL, prices, normalized kg, size ratio, price per kg and the **reason**. This is where to look when a match or price seems wrong.
 
 `.csv` output is also possible (Summary only). The *Notes* column holds informational notes (price spread, packaging weight).
 
-### Performance analysis (`multi_store_performance_analysis.xlsx` by default)
+### Performance analysis (`analisis_de_desempeno.xlsx` by default)
 
 - **Dashboard** — products processed, with an estimate, supported by 2+ stores, marked OK, candidate rows.
 - **Product Analysis** — the original spreadsheet columns plus the robot's result, current BAP price, % difference and *Needs Manual Review*.
@@ -378,6 +378,7 @@ Only the flags above send a product to review. A 1,000-product test showed they 
 ### Price comparison columns (app, with *Compare with current BAP prices* on)
 
 - Results *Summary*: **Current BAP Price**, **% Difference vs Current**, **Price Change > 20%** (YES highlighted, label follows the configured threshold).
+- Results *Summary* also gets **Salesforce Id** (the PricebookEntry Id from the current-prices file), so a results file can be opened in the Review prices tab and exported to CSV on its own, without the current-prices file. Results from older versions without this column still ask for the current-prices file once; after that the saved review keeps its own copy.
 - Performance analysis: *Needs Manual Review* also becomes YES for big price changes, and a **Review Reason** column explains why.
 
 The default 20% threshold is in Advanced settings → Review warnings.
@@ -403,7 +404,7 @@ py price_robot.py --help
 | `--type TYPE` | Filter `Sub-familia de Productos` | `--type "Tipo A seco"` |
 | `--list-types` | Print the product types in the workbook | |
 | `--products PATH` | Another product workbook (relative = next to `price_robot.py`) | `--products test.xlsx` |
-| `--workers N` | Products searched at once (default 6; 100 worked well for the full 5,440-product list) | `--workers 100` |
+| `--workers N` | Products searched at once (default 100, which worked well for the full 5,440-product list) | `--workers 20` |
 | `--stores LIST` | Comma-separated stores | `--stores super99,rey` |
 | `--store NAME` | Repeatable single store | `--store rey --store ribasmith` |
 | `--list-stores` | Print available stores | |
@@ -414,7 +415,7 @@ py price_robot.py --help
 
 Store IDs: `super99`, `superxtra`, `rey`, `ribasmith`. Aliases: `99`, `xtra`, `elrey`, `smrey`, `riba`, `riba-smith`, `riba_smith`.
 
-Observed full-list performance: **5,440 products at 100 workers in approximately 6 minutes**, with no apparent store throttling in those runs. The pre-run time estimate uses this benchmark and scales proportionally with product count and worker count, including workers above 8. Other worker counts are estimates rather than measured benchmarks. Store response times, connection and search-cache usage affect runtime; the live remaining-time display uses actual progress. Advanced settings shows the same guidance and estimate in Spanish and English.
+Observed performance: **5,440 products at 100 workers in approximately 6 minutes**, and about 80 products at 6 workers in 47 seconds (all four stores, no search cache). The pre-run time estimate is fitted to both runs: seconds = products × (3.3 / workers + 0.033), scaled by the number of selected stores. More workers therefore help with diminishing returns (50 → ≈ 9 min, 100 → 6 min, 200 → ≈ 4.5 min for the full list) instead of scaling proportionally. Store response times, connection and search-cache hits change the real runtime; during a search the remaining-time display uses the actual pace (ignoring start-up time). Settings saved with the old default of 6 are moved to 100 once.
 
 ---
 

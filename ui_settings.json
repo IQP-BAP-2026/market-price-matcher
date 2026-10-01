@@ -1,0 +1,63 @@
+{
+  "run": {
+    "stores": [
+      "super99",
+      "superxtra",
+      "rey",
+      "ribasmith"
+    ],
+    "workers": 100,
+    "cache_mode": "use",
+    "CACHE_TTL_HOURS": 12,
+    "average_mode": "store_balanced",
+    "output": "coincidencias_de_precios.xlsx",
+    "output_dir": "",
+    "perf_output": "analisis_de_desempeno.xlsx",
+    "timestamp": "off",
+    "open_when_done": "none"
+  },
+  "matcher": {
+    "RAW_MATCH_STOP_COUNT": 10,
+    "MIN_SIZE_RATIO": 0.67,
+    "MAX_SIZE_RATIO": 1.5,
+    "PREFERRED_SIZE_RATIO_MIN": 0.8,
+    "PREFERRED_SIZE_RATIO_MAX": 1.25,
+    "MIN_PREFERRED_SIZE_MATCHES": 3,
+    "SIZE_CLUSTER_FACTOR": 1.75,
+    "MAX_FALLBACK_SIZE_MATCHES": 10,
+    "HARD_OUTLIER_LOW_RATIO": 0.5,
+    "HARD_OUTLIER_HIGH_RATIO": 2.0,
+    "LOG_MAD_Z_THRESHOLD": 3.5,
+    "DUPLICATE_SIZE_TOLERANCE": 0.1,
+    "DUPLICATE_PRICE_TOLERANCE": 0.15,
+    "DUPLICATE_TOKEN_JACCARD": 0.8,
+    "BAP_MARKET_PRICE_PERCENT": 0.2,
+    "MARKET_PRICE_LEVEL": "economy",
+    "PRICE_BASIS": "regular",
+    "MIN_GOOD_MATCHES": 5,
+    "PRICE_CHANGE_REVIEW_THRESHOLD": 0.2,
+    "PRICE_RATIO_WARNING": 1.75,
+    "PRICE_CV_WARNING": 0.3
+  },
+  "last": {
+    "lang": "en",
+    "products": "C:\\Users\\nrc94\\OneDrive\\Desktop\\matcher2\\products.xlsx",
+    "mode": "test",
+    "limit": 20,
+    "contains": "",
+    "type": "",
+    "perf": false,
+    "recent": {
+      "products": [
+        "C:\\Users\\nrc94\\OneDrive\\Desktop\\matcher2\\products.xlsx"
+      ],
+      "current": [
+        "C:\\Users\\nrc94\\OneDrive\\Desktop\\matcher2\\input\\pricebookcurrent.csv.xlsx",
+        "C:\\Users\\nrc94\\OneDrive\\Desktop\\matcher2\\current_prices.xlsx"
+      ],
+      "results": []
+    }
+  },
+  "review_policy_version": 1,
+  "workers_default_version": 2
+}

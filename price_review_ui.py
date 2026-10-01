@@ -2,23 +2,28 @@
 import tkinter as tk
 from tkinter import font as tkfont
 from tkinter import ttk, messagebox, filedialog
-import webbrowser
 
-from price_review import ReviewSession, PRICE, NAME, number, valid_price, reviewer_notes
+from price_review import ReviewSession, PRICE, NAME, number, valid_price
 from review_config import PRICE_CHANGE_REVIEW_THRESHOLD, REVIEW_PRICE_DECIMALS
 from matcher_core import normalize
 
 
-class ReviewWindow(tk.Toplevel):
+class _ReviewView:
+    """The review screen. Used as its own window (ReviewWindow) or as a tab inside the main window (ReviewPanel)."""
+    embedded = False
+
     def __init__(self, parent, results, template, settings=None, products=None, lang="es", session=None):
         # Load before constructing a window so a bad workbook cannot leave an empty window.
         self.session = session if session is not None else ReviewSession(results, template, settings, products, lang)
         super().__init__(parent)
         self._build()
         if self.session.archived_review:
-            messagebox.showinfo(self.title(), self.tr("The input files changed. Previous decisions were archived; this review starts pending.\n",
+            messagebox.showinfo(self.window_title(), self.tr("The input files changed. Previous decisions were archived; this review starts pending.\n",
                                                 "Los archivos cambiaron. Se archivaron las decisiones anteriores; esta revisión empieza pendiente.\n") +
                                 str(self.session.archived_review), parent=self)
+
+    def window_title(self):
+        return self.tr("Review prices · Human verification", "Revisar precios · Verificación humana")
 
     def _build(self):
         self.tr = lambda en, es: es if self.session.lang == "es" else en
@@ -30,11 +35,8 @@ class ReviewWindow(tk.Toplevel):
         self._drag_timer = None
         self._percent_labels = []
         self._paint_job = None
-        self._sash_job = None
         self.price = tk.StringVar()
         self.note = tk.StringVar()
-        self.full_evidence = tk.BooleanVar(value=False)
-        self._note_wheel_remainder = 0.0
         from price_robot_ui import C_BG, C_CARD, C_TEXT, C_MUTED, C_ACCENT, C_HEADER, C_BORDER, FONT, register_scroll, on_mouse_wheel, fit_window, work_area
         self.configure(background=C_BG)
         self.body_font = tkfont.Font(self, family=FONT, size=10)
@@ -63,14 +65,14 @@ class ReviewWindow(tk.Toplevel):
         style.map("ReviewScore.TRadiobutton", foreground=[("selected", C_ACCENT)],
                   background=[("selected", "#E8F3E8"), ("active", "#F4F6F4")])
         self.option_add("*TCombobox*Listbox.font", self.body_font)
-        self.title(tr("Review prices · Human verification", "Revisar precios · Verificación humana"))
+        if not self.embedded:
+            self.title(self.window_title())
         scale = self.unit / 17
         _, _, available_width, available_height = work_area(self)
         width = min(round(1250 * scale), available_width - 60)
         height = min(round(850 * scale), available_height - 100)
         self.compact = height / scale < 700
-        self._sash_initialized = False
-        if not getattr(self, "_built", False):
+        if not getattr(self, "_built", False) and not self.embedded:
             fit_window(self, 1250, 850, 760, 560)
         self._built = True
         self.columnconfigure(0, weight=1)
@@ -80,8 +82,9 @@ class ReviewWindow(tk.Toplevel):
         top = ttk.Frame(self, padding=gap if self.compact else gap * 2, style="Review.TFrame")
         top.grid(row=0, column=0, sticky="ew", padx=gap * 2, pady=(gap // 2, gap // 2) if self.compact else (gap * 2, gap))
         from price_robot_ui import LangToggle
-        self.language_toggle = LangToggle(top, C_HEADER, self.set_language, lang=self.session.lang)
-        self.language_toggle.pack(side="right", anchor="ne", padx=(gap, 0))
+        if not self.embedded:  # inside the main window, its own ES / EN switch is used
+            self.language_toggle = LangToggle(top, C_HEADER, self.set_language, lang=self.session.lang)
+            self.language_toggle.pack(side="right", anchor="ne", padx=(gap, 0))
         ttk.Label(top, text=tr("Review prices", "Revisar precios") if self.compact else tr("2 · Verify proposed prices", "2 · Verificar precios propuestos"),
                   font=(FONT, 12 if self.compact else 16, "bold"), foreground=C_HEADER, background=C_CARD).pack(anchor="w", side="left" if self.compact else "top")
         intro = ttk.Label(top, style="ReviewMuted.TLabel", text=tr("Confidence: 1 = low · 5 = high. Check the evidence and approve a price. Decisions save automatically.",
@@ -99,7 +102,7 @@ class ReviewWindow(tk.Toplevel):
         for value in ("all", "1", "2", "3", "4", "5"):
             count = sum(str(i["score"]) == value for i in self.session.items.values())
             text = tr("All scores", "Todos") if value == "all" else f"{value}/5 ({count})"
-            ttk.Radiobutton(scores, text=text, style="ReviewScore.TRadiobutton", variable=self.score, value=value, command=self.refresh).pack(side="left", padx=2)
+            ttk.Radiobutton(scores, text=text, style="ReviewScore.TRadiobutton", variable=self.score, value=value, command=self.refresh_list).pack(side="left", padx=2)
         filter_card = ttk.Frame(self, padding=(gap, gap // 3 if self.compact else gap), style="Review.TFrame")
         filter_card.grid(row=2, column=0, sticky="ew", padx=gap * 2, pady=(0, gap))
         filters = ttk.Frame(filter_card, style="Review.TFrame")
@@ -111,13 +114,15 @@ class ReviewWindow(tk.Toplevel):
         filters.columnconfigure(2, weight=1)
         selector = ttk.Combobox(filters, textvariable=self.filter, values=self.filter_values, state="readonly", width=22, font=self.body_font)
         selector.grid(row=0, column=0, sticky="ew")
-        selector.bind("<<ComboboxSelected>>", lambda _: self.refresh())
+        selector.bind("<<ComboboxSelected>>", lambda _: self.refresh_list())
         ttk.Label(filters, text=tr("Search:", "Buscar:")).grid(row=0, column=1, padx=(gap, 4))
         self.search = tk.StringVar()
         ttk.Entry(filters, textvariable=self.search, width=1, font=self.body_font).grid(row=0, column=2, sticky="ew", padx=(0, gap))
         self.search.trace_add("write", lambda *_: self.refresh())
         self.categories_button = ttk.Button(filters, text=tr("Categories ▾", "Categorías ▾"), style="Review.TButton", command=self.toggle_categories)
         self.categories_button.grid(row=0, column=3, sticky="e")
+        ttk.Button(filters, text=tr("Refresh list", "Actualizar lista"), style="Review.TButton",
+                   command=self.refresh_list).grid(row=0, column=4, sticky="e", padx=(gap, 0))
         self.filter_card = filter_card
         self.category_box = ttk.Frame(self, padding=gap, style="Review.TFrame", relief="solid", borderwidth=1)
         self.category_fields = {tr("Match group", "Grupo de búsqueda"): "Match group",
@@ -135,7 +140,7 @@ class ReviewWindow(tk.Toplevel):
         category_field.bind("<<ComboboxSelected>>", self.category_changed)
         self.category_combo = ttk.Combobox(self.category_box, textvariable=self.category_value, state="readonly", width=1, height=8)
         self.category_combo.grid(row=0, column=1, sticky="ew")
-        self.category_combo.bind("<<ComboboxSelected>>", lambda _: self.refresh())
+        self.category_combo.bind("<<ComboboxSelected>>", lambda _: self.refresh_list())
         ttk.Button(self.category_box, text=tr("Sort by category ↕", "Ordenar por categoría ↕"),
                    command=lambda: self.sort_by("category")).grid(row=2, column=0, sticky="w", pady=(gap, 0))
         ttk.Label(self.category_box, text=tr("Product type", "Tipo de producto")).grid(row=1, column=0, sticky="w", pady=(gap, 0))
@@ -143,23 +148,20 @@ class ReviewWindow(tk.Toplevel):
         self.type_filter = ttk.Combobox(self.category_box, textvariable=self.product_type,
                                        values=[tr("All types", "Todos los tipos")] + types, state="readonly", width=1, height=8)
         self.type_filter.grid(row=1, column=1, sticky="ew", pady=(gap, 0))
-        self.type_filter.bind("<<ComboboxSelected>>", lambda _: self.refresh())
+        self.type_filter.bind("<<ComboboxSelected>>", lambda _: self.refresh_list())
         ttk.Button(self.category_box, text=tr("Clear categories", "Limpiar categorías"), command=self.clear_categories).grid(row=2, column=1, sticky="e", pady=(gap, 0))
         self.bind("<Configure>", lambda e: self.position_categories() if e.widget is self and self.category_box.winfo_manager() else None)
         self.category_changed(refresh=False)
-        self.panes = tk.PanedWindow(self, orient="vertical", bg=C_BG, sashwidth=gap,
-                                    sashrelief="flat", borderwidth=0, opaqueresize=True)
-        self.panes.grid(row=3, column=0, sticky="nsew", padx=gap * 2)
-        self.panes.bind("<Configure>", self.size_panes)
-        frame = ttk.Frame(self.panes, padding=1, style="Review.TFrame")
-        self.panes.add(frame, minsize=self.unit * 5, stretch="always")
+        # The product list takes all the spare height; the price boxes sit below it.
+        frame = ttk.Frame(self, padding=1, style="Review.TFrame")
+        frame.grid(row=3, column=0, sticky="nsew", padx=gap * 2)
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
-        columns = ("score", "code", "name", "current", "proposal", "final", "delta", "percent", "status")
+        columns = ("score", "code", "name", "current", "new", "percent", "status")
         self.tree = ttk.Treeview(frame, columns=columns, show="headings", selectmode="extended", height=7, style="Review.Treeview")
         labels = (tr("Confidence", "Confianza"), tr("Code", "Código"), tr("Product", "Producto"),
-                  tr("Current", "Actual"), tr("Proposed", "Propuesto"), tr("Approved", "Aprobado"),
-                  tr("Change $", "Cambio $"), tr("Change %", "Cambio %"), tr("Decision", "Decisión"))
+                  tr("Current", "Actual"), tr("New", "Nuevo"),
+                  tr("Change %", "Cambio %"), tr("Decision", "Decisión"))
         self._column_labels = dict(zip(columns, labels))
         for col, label in zip(columns, labels):
             self.tree.heading(col, text=label, command=lambda c=col: self.sort_by(c))
@@ -168,7 +170,7 @@ class ReviewWindow(tk.Toplevel):
                 samples.extend(self.session.items)
             elif col == "status":
                 samples.extend(self.status_names.values())
-            elif col in ("current", "proposal", "final", "delta", "percent"):
+            elif col in ("current", "new", "percent"):
                 samples.append("$99,999.99" if col != "percent" else "+999.9%")
             width = max(self.heading_font.measure(str(text)) for text in samples) + gap * 3
             if col == "name":
@@ -183,7 +185,7 @@ class ReviewWindow(tk.Toplevel):
         xscroll.grid(row=1, column=0, sticky="ew")
         self.tree.configure(yscrollcommand=lambda *a: (yscroll.set(*a), self.queue_percent_cells()),
                             xscrollcommand=lambda *a: (xscroll.set(*a), self.queue_percent_cells()))
-        self.tree.bind("<<TreeviewSelect>>", self.show_details)
+        self.tree.bind("<<TreeviewSelect>>", self.on_select)
         self.tree.bind("<Configure>", lambda _: self.queue_percent_cells())
         self.tree.bind("<KeyPress>", self.tree_key)
         self.tree.bind("<ButtonPress-1>", self.drag_start)
@@ -195,19 +197,18 @@ class ReviewWindow(tk.Toplevel):
         self.tree.tag_configure("accepted", background="#edf7ee")
         self.tree.tag_configure("manual", background="#eaf2fc")
         self.tree.tag_configure("rejected", background="#fceeee")
-        detail_frame = ttk.Frame(self.panes, padding=(gap, 0 if self.compact else gap), style="Review.TFrame")
-        self.panes.add(detail_frame, minsize=self.unit * 7, stretch="always")
+        detail_frame = ttk.Frame(self, padding=(gap, gap // 2 if self.compact else gap), style="Review.TFrame")
+        detail_frame.grid(row=4, column=0, sticky="ew", padx=gap * 2, pady=(gap, 0))
         evidence_header = ttk.Frame(detail_frame, style="Review.TFrame")
-        evidence_header.pack(fill="x")
-        ttk.Label(evidence_header, text=tr("Review notes", "Notas de revisión"), font=self.heading_font,
-                  foreground=C_HEADER, background=C_CARD).pack(side="left")
-        ttk.Checkbutton(evidence_header, text=tr("Full evidence", "Evidencia completa"), variable=self.full_evidence,
-                        command=self.toggle_evidence).pack(side="right")
+        evidence_header.pack(fill="x", pady=(0, gap // 2))
         self.candidates_button = ttk.Button(evidence_header, text=tr("Choose candidates…", "Elegir candidatos…"),
                                             command=self.open_candidates)
-        self.candidates_button.pack(side="right", padx=gap)
+        self.candidates_button.pack(side="right")
+        self.selected_label = ttk.Label(evidence_header, text="", font=self.heading_font,
+                                        foreground=C_HEADER, background=C_CARD, anchor="w")
+        self.selected_label.pack(side="left", fill="x", expand=True)
         comparison = ttk.Frame(detail_frame, style="Review.TFrame")
-        comparison.pack(fill="x", pady=(0, gap))
+        comparison.pack(fill="x")
         self.metrics = {}
         for index, (key, label) in enumerate((("current", tr("CURRENT PRICE", "PRECIO ACTUAL")),
                                                ("new", tr("NEW PRICE · ENTER ↵", "PRECIO NUEVO · ENTER ↵")),
@@ -226,19 +227,6 @@ class ReviewWindow(tk.Toplevel):
                 value.pack(fill="x")
                 self.metrics[key] = value
         self.price.trace_add("write", lambda *_: self.update_metrics())
-        self.details = tk.Text(detail_frame, wrap="word", height=6, font=self.body_font, state="disabled",
-                               bg=C_CARD, fg=C_TEXT, relief="flat", borderwidth=0, padx=gap, pady=gap,
-                               spacing1=gap // 3, spacing3=gap // 3, highlightthickness=0)
-        register_scroll(self.details, text_lines=True)
-        self.details.bind("<MouseWheel>", self.scroll_notes)
-        self.details.bind("<Button-4>", self.scroll_notes)
-        self.details.bind("<Button-5>", self.scroll_notes)
-        self.details.tag_configure("title", font=(FONT, 12, "bold"), foreground=C_HEADER, spacing3=gap)
-        self.details.tag_configure("muted", foreground=C_MUTED, spacing3=gap)
-        detail_scroll = ttk.Scrollbar(detail_frame, command=self.details.yview)
-        self.details.configure(yscrollcommand=detail_scroll.set)
-        detail_scroll.pack(side="right", fill="y")
-        self.details.pack(fill="both", expand=True)
         actions = ttk.Frame(frame, padding=(gap, 0 if self.compact else gap), style="Review.TFrame")
         actions.grid(row=2, column=0, columnspan=2, sticky="ew")
         selected_actions = ttk.Frame(actions)
@@ -246,25 +234,23 @@ class ReviewWindow(tk.Toplevel):
         for label, decision in ((tr("Accept [A]", "Aceptar [A]"), "accepted"),
                                 (tr("Reject [R]", "Rechazar [R]"), "rejected")):
             ttk.Button(selected_actions, text=label, style="ReviewAccent.TButton" if decision == "accepted" else "Review.TButton", command=lambda d=decision: self.decide(d)).pack(side="left", padx=3)
-        ttk.Button(selected_actions, text=tr("Undo", "Deshacer"), style="Review.TButton", command=lambda: self.run(self.session.undo)).pack(side="left", padx=3)
-        ttk.Button(selected_actions, text=tr("Save ↵", "Guardar ↵"), style="Review.TButton", command=self.manual).pack(side="left", padx=3)
-        more = ttk.Menubutton(selected_actions, text=tr("Group actions ▾", "Acciones de grupo ▾"))
-        more.pack(side="left", padx=3)
-        menu = tk.Menu(more, tearoff=False)
-        more.configure(menu=menu)
-        menu.add_command(label=tr("Accept visible group", "Aceptar grupo visible"), command=lambda: self.decide("accepted", True))
-        menu.add_command(label=tr("Reject visible group", "Rechazar grupo visible"), command=lambda: self.decide("rejected", True))
-        menu.add_command(label=tr("Reset selected to pending", "Volver seleccionados a pendiente"), command=lambda: self.decide("pending"))
-        shortcuts = ttk.Label(actions, text=tr("A accept · R reject · Type a price + Enter · Drag to select · Click a heading to sort",
-                                   "A aceptar · R rechazar · Escriba precio + Enter · Arrastre para seleccionar · Encabezado para ordenar"),
+        self.undo_button = ttk.Button(selected_actions, text=tr("Undo [Ctrl+Z]", "Deshacer [Ctrl+Z]"), style="Review.TButton", command=self.undo)
+        self.undo_button.pack(side="left", padx=3)
+        self.redo_button = ttk.Button(selected_actions, text=tr("Redo [Ctrl+Y]", "Rehacer [Ctrl+Y]"), style="Review.TButton", command=self.redo)
+        self.redo_button.pack(side="left", padx=3)
+        # Ctrl+Z / Ctrl+Y work anywhere in the review, not only in the list.
+        top = self.winfo_toplevel()
+        for sequence, handler in (("<Control-z>", self._undo_key), ("<Control-Z>", self._undo_key),
+                                  ("<Control-y>", self._redo_key), ("<Control-Y>", self._redo_key)):
+            top.bind(sequence, handler)
+        shortcuts = ttk.Label(actions, text=tr("A accept · R reject · Type a price + Enter · Ctrl+Z undo · Ctrl+Y redo · Drag to select · Click a heading to sort",
+                                   "A aceptar · R rechazar · Escriba precio + Enter · Ctrl+Z deshacer · Ctrl+Y rehacer · Arrastre para seleccionar · Encabezado para ordenar"),
                   style="ReviewMuted.TLabel")
         if not self.compact:
             shortcuts.pack(anchor="w", fill="x", pady=(gap // 2, 0))
         shortcuts.bind("<Configure>", lambda e: shortcuts.configure(wraplength=max(100, e.width)))
         footer = ttk.Frame(self, padding=(gap, gap // 3 if self.compact else gap), style="Review.TFrame")
         footer.grid(row=7, column=0, sticky="ew", padx=gap * 2, pady=(0, gap * 2))
-        self.include_unchanged = tk.BooleanVar(value=False)
-        ttk.Checkbutton(footer, text=tr("Include unchanged current prices", "Incluir precios actuales sin cambios"), variable=self.include_unchanged).pack(side="left")
         ttk.Button(footer, text=tr("Export CSV…", "Exportar CSV…"), style="ReviewAccent.TButton", command=self.export).pack(side="right")
         self.refresh()
 
@@ -282,7 +268,6 @@ class ReviewWindow(tk.Toplevel):
         product_type = self.product_type.get()
         all_types = product_type == self.tr("All types", "Todos los tipos")
         categories_open = bool(self.category_box.winfo_manager())
-        full_evidence, include_unchanged = self.full_evidence.get(), self.include_unchanged.get()
         sort_key, sort_reverse = self.sort_key, self.sort_reverse
         self._cleanup_views()
         for child in self.winfo_children():
@@ -298,8 +283,6 @@ class ReviewWindow(tk.Toplevel):
             self.category_value.set(category)
         if not all_types:
             self.product_type.set(product_type)
-        self.full_evidence.set(full_evidence)
-        self.include_unchanged.set(include_unchanged)
         self.sort_key, self.sort_reverse = sort_key, not sort_reverse
         self.search.set(search)
         self.sort_by(sort_key)
@@ -328,31 +311,6 @@ class ReviewWindow(tk.Toplevel):
         self.category_box.place(x=self.filter_card.winfo_x() + self.filter_card.winfo_width() - width,
                                 y=self.filter_card.winfo_y() + self.filter_card.winfo_height(), width=width)
 
-    def scroll_notes(self, event):
-        num = getattr(event, "num", None)
-        delta = 120 if num == 4 else -120 if num == 5 else event.delta
-        self._note_wheel_remainder -= delta / 120 * 3
-        lines = int(self._note_wheel_remainder)
-        self._note_wheel_remainder -= lines
-        if lines:
-            self.details.yview_scroll(lines, "units")
-        return "break"
-
-    def toggle_evidence(self):
-        draft, note = self.price.get(), self.note.get()
-        self._detail_signature = None
-        self.show_details()
-        self.price.set(draft)
-        self.note.set(note)
-
-    def size_panes(self, event):
-        if not self._sash_initialized and event.height > self.unit * 8:
-            self._sash_initialized = True
-            def place():
-                self._sash_job = None
-                self.panes.sash_place(0, 0, int(self.panes.winfo_height() * .55))
-            self._sash_job = self.after_idle(place)
-
     def category_changed(self, event=None, refresh=True):
         field = self.category_fields[self.category_field.get()]
         values = sorted({i["categories"].get(field, "") for i in self.session.items.values()} - {""}, key=normalize)
@@ -364,7 +322,7 @@ class ReviewWindow(tk.Toplevel):
     def clear_categories(self):
         self.category_value.set(self.tr("All", "Todos"))
         self.product_type.set(self.tr("All types", "Todos los tipos"))
-        self.refresh()
+        self.refresh_list()
 
     def sort_by(self, column):
         self.sort_reverse = not self.sort_reverse if self.sort_key == column else False
@@ -380,7 +338,7 @@ class ReviewWindow(tk.Toplevel):
         current = item["current"]
         delta = price - current if price is not None and current is not None else None
         values = {"score": item["score"], "code": key, "name": item["row"].get(NAME) or "",
-                  "current": current, "proposal": proposed, "final": item["price"], "delta": delta,
+                  "current": current, "new": price,
                   "percent": delta / current if delta is not None and current else None,
                   "status": self.status_names[item["decision"]],
                   "category": item["categories"].get(self.category_fields[self.category_field.get()], "")}
@@ -409,10 +367,7 @@ class ReviewWindow(tk.Toplevel):
         return "break"
 
     def tree_key(self, event):
-        if event.state & 4:  # Ctrl shortcuts must not start price editing.
-            if event.keysym.lower() == "z":
-                self.run(self.session.undo)
-                return "break"
+        if event.state & 4:  # Ctrl shortcuts (undo/redo) are handled by the window, not price editing.
             return
         if event.keysym.lower() in ("a", "r", "return"):
             self.decide("rejected" if event.keysym.lower() == "r" else "accepted")
@@ -502,10 +457,10 @@ class ReviewWindow(tk.Toplevel):
 
     def _cleanup_views(self):
         from price_robot_ui import _SCROLL_VIEWS, _SCROLL_REMAINDER
-        for widget in (self.tree, self.details):
+        for widget in (self.tree,):
             _SCROLL_VIEWS.pop(str(widget), None)
             _SCROLL_REMAINDER.pop(str(widget), None)
-        for job in (self._paint_job, self._drag_timer, self._sash_job):
+        for job in (self._paint_job, self._drag_timer):
             if job:
                 self.after_cancel(job)
 
@@ -524,8 +479,12 @@ class ReviewWindow(tk.Toplevel):
                     following += [k for k in before[:min(positions)] if k not in advance]
         try:
             action()
-            self.refresh()
+            # Products already on screen stay listed until the filters are changed or refreshed,
+            # so accepting a product under "Pending" doesn't make it vanish.
+            self.refresh(keep=before)
             if advance:
+                # go to the next product that still needs attention under the current filter
+                following = [k for k in following if self.matches_decision_filter(k)]
                 next_key = next((key for key in following if self.tree.exists(key)), None)
                 self.tree.selection_set([next_key] if next_key else [])
                 if next_key:
@@ -534,36 +493,84 @@ class ReviewWindow(tk.Toplevel):
                 self.tree.focus_set()
                 self.show_details()
         except Exception as exc:
-            messagebox.showerror(self.title(), str(exc), parent=self)
+            messagebox.showerror(self.window_title(), str(exc), parent=self)
 
-    def refresh(self):
+    def refresh_list(self):
+        """Apply the filters again (filter menus, score buttons, "Refresh list") and give the keyboard back
+        to the list, so A / R / Enter act on the highlighted product right away."""
+        self.refresh()
+        rows = self.tree.get_children()
+        selected = self.tree.selection()
+        if not selected and rows:
+            self.tree.selection_set(rows[0])
+            selected = (rows[0],)
+        if selected:
+            self.tree.focus(selected[0])
+            self.tree.see(selected[0])
+        self.tree.focus_set()
+        self.on_select()
+
+    def undo(self):
+        self.run(self.session.undo)
+
+    def redo(self):
+        self.run(self.session.redo)
+
+    def _undo_key(self, event=None):
+        if self.winfo_exists() and self.winfo_viewable():
+            self.undo()
+            return "break"
+
+    def _redo_key(self, event=None):
+        if self.winfo_exists() and self.winfo_viewable():
+            self.redo()
+            return "break"
+
+    def matches_decision_filter(self, key):
+        status = self.session.items[key]["decision"]
+        filter_id = self.filter_values.index(self.filter.get())
+        if filter_id == 1:
+            return status == "pending"
+        if filter_id == 2:
+            return status in ("accepted", "manual")
+        if filter_id == 3:
+            return status == "rejected"
+        if filter_id == 4:
+            return status == "rejected" or not valid_price(self.session.items[key]["row"].get(PRICE)) and status not in ("accepted", "manual")
+        return True
+
+    def _passes_filters(self, key, item, field):
+        if self.score.get() != "all" and str(item["score"]) != self.score.get():
+            return False
+        if not self.matches_decision_filter(key):
+            return False
+        if self.category_value.get() != self.tr("All", "Todos") and item["categories"].get(field) != self.category_value.get():
+            return False
+        if self.product_type.get() != self.tr("All types", "Todos los tipos") and item["categories"].get("Sub-familia de Productos") != self.product_type.get():
+            return False
+        name = str(item["row"].get(NAME) or "")
+        return normalize(self.search.get()) in normalize(key + " " + name + " " + " ".join(item["categories"].values()))
+
+    def refresh(self, keep=()):
+        """Redraw the list. Products in `keep` stay listed even if they no longer match the filters."""
+        keep = set(keep)
         selected = self.tree.selection()
         old_order = self.tree.get_children()
         desired = []
-        filter_id = self.filter_values.index(self.filter.get())
         field = self.category_fields[self.category_field.get()]
         for key, item in sorted(self.session.items.items(), key=self.sort_value, reverse=self.sort_reverse):
             status = item["decision"]
-            if self.score.get() != "all" and str(item["score"]) != self.score.get():
-                continue
-            if filter_id == 1 and status != "pending" or filter_id == 2 and status not in ("accepted", "manual") or filter_id == 3 and status != "rejected":
-                continue
-            if filter_id == 4 and not (status == "rejected" or not valid_price(item["row"].get(PRICE)) and status not in ("accepted", "manual")):
-                continue
             name = str(item["row"].get(NAME) or "")
-            if self.category_value.get() != self.tr("All", "Todos") and item["categories"].get(field) != self.category_value.get():
-                continue
-            if self.product_type.get() != self.tr("All types", "Todos los tipos") and item["categories"].get("Sub-familia de Productos") != self.product_type.get():
-                continue
-            if normalize(self.search.get()) not in normalize(key + " " + name + " " + " ".join(item["categories"].values())):
+            if key not in keep and not self._passes_filters(key, item, field):
                 continue
             proposed, current = number(item["row"].get(PRICE)), item["current"]
             final = item["price"]
             compare = final if final is not None else proposed
             delta = compare - current if compare is not None and current is not None else None
             money = lambda v: "—" if v is None else f"${v:,.2f}"
-            values = (f'{item["score"]}/5', key, name, money(current), money(proposed), money(final),
-                      "—" if delta is None else f"{delta:+.2f}", "—" if delta is None or not current else f"{delta/current:+.1%}", self.status_names[status])
+            # "New" = the approved price once decided, otherwise the robot's proposal
+            values = (f'{item["score"]}/5', key, name, money(current), money(compare),
+                      "—" if delta is None or not current else f"{delta/current:+.1%}", self.status_names[status])
             desired.append(key)
             if key not in self._rendered:
                 self.tree.insert("", "end", iid=key, values=values, tags=(status,))
@@ -587,6 +594,8 @@ class ReviewWindow(tk.Toplevel):
             reviewed = len(self.session.items) - counts["pending"]
             self.progress_label.configure(text=self.tr(f"{reviewed}/{len(self.session.items)} reviewed · {len(desired)} shown",
                                                       f"{reviewed}/{len(self.session.items)} revisados · {len(desired)} visibles"))
+        self.undo_button.configure(state="normal" if self.session.undo_stack else "disabled")
+        self.redo_button.configure(state="normal" if getattr(self.session, "redo_stack", None) else "disabled")
         self.show_details()
         self.queue_percent_cells()
 
@@ -599,47 +608,50 @@ class ReviewWindow(tk.Toplevel):
         if signature == self._detail_signature:
             return
         self._detail_signature = signature
-        self.details.configure(state="normal")
-        self.details.delete("1.0", "end")
         if len(keys) == 1:
             key = keys[0]
             item = self.session.items[key]
-            value = item["price"] if item["price"] is not None else number(item["row"].get(PRICE))
+            value = item["price"] if item["price"] is not None else number(self.session.accept_price(key))
             self.price.set("" if value is None else f"{value:.2f}")
             self.note.set(item["note"])
-            self.details.insert("end", f'{item["row"].get(NAME)} · {item["score"]}/5 ({item["points"]}/100)\n', "title")
-            self.details.insert("end", " · ".join(dict.fromkeys(v for v in item["categories"].values() if v)) + "\n", "muted")
-            notes = item["notes"] if self.full_evidence.get() else reviewer_notes(item, self.session.settings, self.session.base.get(key), self.session.lang)
-            self.details.insert("end", "\n".join("• " + n for n in notes))
-            if item["note"]:
-                self.details.insert("end", "\n\n" + self.tr("Reviewer note: ", "Nota del revisor: ") + item["note"])
-            if self.full_evidence.get():
-                self.details.insert("end", "\n\n" + self.tr("Supermarket evidence (accepted/rejected by the matcher):\n", "Evidencia de supermercados (aceptada/rechazada por el algoritmo):\n"))
-            for idx, candidate in enumerate(self.session.candidates[key] if self.full_evidence.get() else []):
-                included = self.session.candidate_accepted(key, idx)
-                self.details.insert("end", "\n" + (self.tr("Included in price", "Incluido en precio") if included else self.tr("Excluded from price", "Excluido del precio")))
-                self.details.insert("end", f"\n{candidate.get('Store')} · {candidate.get('Status')} · {candidate.get('Candidate Product')}\n"
-                                    f"${candidate.get('Chosen Price')} · {candidate.get('Normalized kg')} kg/units · {candidate.get('Price / kg')} /kg/unit\n{candidate.get('Reason') or ''}\n")
-                url = str(candidate.get("Product URL") or "")
-                if url.startswith(("https://", "http://")):
-                    tag = f"url{idx}"
-                    self.details.insert("end", url + "\n", tag)
-                    self.details.tag_config(tag, foreground="#2365a2", underline=True)
-                    self.details.tag_bind(tag, "<Button-1>", lambda _, u=url: webbrowser.open(u))
+            self._loaded_price = (key, self.price.get())
+            self.selected_label.configure(text=f'{item["row"].get(NAME)} · {key} · {item["score"]}/5', foreground="#1F4D2B")
         else:
             self.price.set("")
             self.note.set("")
-            self.details.insert("end", self.tr("Select one product to inspect its evidence or enter a price. Ctrl/Shift selects multiple products for group decisions.",
-                                               "Seleccione un producto para revisar evidencia o ingresar un precio. Ctrl/Mayús selecciona varios productos."))
-        self.details.configure(state="disabled")
-        self.details.yview_moveto(0)
+            self._loaded_price = None
+            text = (self.tr(f"{len(keys)} products selected", f"{len(keys)} productos seleccionados") if keys else
+                    self.tr("Select a product to enter a price.", "Seleccione un producto para ingresar un precio."))
+            self.selected_label.configure(text=text, foreground="#667085")
+
+    def on_select(self, event=None):
+        """Selecting another product saves a price typed for the previous one, just like pressing Enter."""
+        self.commit_typed_price()
+        self.show_details(event)
+
+    def commit_typed_price(self):
+        loaded = getattr(self, "_loaded_price", None)
+        if not loaded:
+            return
+        key, shown = loaded
+        if self.tree.selection() == (key,):
+            return  # still on the same product (e.g. the list was only redrawn)
+        typed = self.price.get().strip()
+        if typed == shown.strip() or key not in self.session.items:
+            return
+        self._loaded_price = None
+        value = number(typed.replace(",", "."))
+        if value is None or not valid_price(value):
+            return  # nothing usable typed: leave the product as it was
+        self._detail_signature = None
+        self.run(lambda: self.session.decide([key], "manual", typed.replace(",", "."), self.note.get()))
 
     def open_candidates(self):
         keys = self.tree.selection()
         if len(keys) != 1:
             return
         if not self.session.candidates[keys[0]]:
-            messagebox.showinfo(self.title(), self.tr("No candidate details were saved for this product. Open an Excel results file with a Candidates sheet.",
+            messagebox.showinfo(self.window_title(), self.tr("No candidate details were saved for this product. Open an Excel results file with a Candidates sheet.",
                                                       "No se guardaron candidatos para este producto. Abra un archivo Excel de resultados con la hoja Candidates."), parent=self)
             return
         from candidate_review_ui import CandidateReviewWindow
@@ -650,10 +662,12 @@ class ReviewWindow(tk.Toplevel):
         if not keys:
             return
         if decision == "accepted" and len(keys) == 1 and not visible:
-            proposal = number(self.session.items[keys[0]]["row"].get(PRICE))
-            if number(self.price.get().replace(",", ".")) != (round(proposal, REVIEW_PRICE_DECIMALS) if proposal is not None else None):
+            # what "Accept" approves: the proposal, or the current BAP price when there is no proposal
+            proposal = number(self.session.accept_price(keys[0]))
+            typed = number(self.price.get().replace(",", "."))
+            if typed is not None and typed != (round(proposal, REVIEW_PRICE_DECIMALS) if proposal is not None else None):
                 return self.manual()
-        if len(keys) > 1 and not messagebox.askyesno(self.title(), self.tr(
+        if len(keys) > 1 and not messagebox.askyesno(self.window_title(), self.tr(
                 f"Apply '{self.status_names[decision]}' to these {len(keys)} visible/selected products? Existing decisions in this group will be replaced.",
                 f"¿Aplicar '{self.status_names[decision]}' a estos {len(keys)} productos visibles/seleccionados? Se reemplazarán sus decisiones anteriores."), parent=self):
             return
@@ -667,14 +681,20 @@ class ReviewWindow(tk.Toplevel):
     def export(self):
         pending = sum(i["decision"] == "pending" for i in self.session.items.values())
         description = self.tr("Only accepted and manually approved prices will be exported.", "Solo se exportarán precios aceptados o aprobados manualmente.")
-        if self.include_unchanged.get():
-            description = self.tr("Approved prices plus unchanged positive current prices will be exported. Rejected and pending proposals will not replace current prices.",
-                                  "Se exportarán precios aprobados y precios actuales positivos sin cambios. Las propuestas pendientes o rechazadas no reemplazarán precios actuales.")
-        if not messagebox.askyesno(self.title(), description + self.tr(f"\nPending products: {pending}. Continue?", f"\nProductos pendientes: {pending}. ¿Continuar?"), parent=self):
+        if not messagebox.askyesno(self.window_title(), description + self.tr(f"\nPending products: {pending}. Continue?", f"\nProductos pendientes: {pending}. ¿Continuar?"), parent=self):
             return
         path = filedialog.asksaveasfilename(parent=self, defaultextension=".csv", filetypes=[("CSV", "*.csv")], initialfile="salesforce_reviewed_prices.csv")
         if path:
             def save():
-                count = self.session.export(path, self.include_unchanged.get())
-                messagebox.showinfo(self.title(), self.tr(f"Exported {count} products to:\n{path}", f"Se exportaron {count} productos a:\n{path}"), parent=self)
+                count = self.session.export(path)
+                messagebox.showinfo(self.window_title(), self.tr(f"Exported {count} products to:\n{path}", f"Se exportaron {count} productos a:\n{path}"), parent=self)
             self.run(save)
+
+
+class ReviewWindow(_ReviewView, tk.Toplevel):
+    """The review as a separate window."""
+
+
+class ReviewPanel(_ReviewView, tk.Frame):
+    """The review inside the main window's "Review prices" tab."""
+    embedded = True

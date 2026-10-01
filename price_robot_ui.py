@@ -10,6 +10,7 @@ Open by double-clicking launch.bat, or:
 """
 from __future__ import annotations
 
+import csv
 import json
 import os
 import queue
@@ -33,7 +34,6 @@ ERROR_LOG = BASE_DIR / "ui_errors.log"   # remembers product lists so filters lo
 DEFAULT_PRODUCTS = BASE_DIR / "products.xlsx"
 REQUIREMENTS = BASE_DIR / "requirements.txt"
 
-PROBLEM_KINDS = ("no_price", "review", "errors", "price_change")
 
 STORES = [
     ("super99", "Super 99"),
@@ -54,9 +54,11 @@ STRINGS = {
                      "Banco de Alimentos Panamá · supermarket market prices"),
     "card_products": ("Archivos", "Files"),
     "products_label": ("Productos:", "Products:"),
-    "compare_check": ("Comparar con los precios actuales de BAP", "Compare with current BAP prices"),
-    "compare_hint": ("Excel o CSV con ProductCode, Id y UnitPrice de Salesforce.",
-                     "Salesforce Excel or CSV with ProductCode, Id and UnitPrice headers."),
+    "current_label": ("Precios actuales:", "Current prices:"),
+    "compare_hint": ("Descárguelo de Salesforce: un reporte de productos en Excel o CSV con las columnas "
+                     "ProductCode, Id y UnitPrice.",
+                     "Download it from Salesforce: a product report in Excel or CSV with the columns "
+                     "ProductCode, Id and UnitPrice."),
     "perf_check": ("Crear el análisis de desempeño", "Create performance analysis"),
     "perf_hint": ("Un segundo archivo de Excel con un resumen y columnas de revisión. En búsquedas grandes tarda más.",
                   "A second Excel file with a dashboard and review columns. Takes extra time on big searches."),
@@ -64,8 +66,19 @@ STRINGS = {
     "pick_current_title": ("Elegir archivo de precios actuales", "Choose current prices file"),
     "pick_results_title": ("Elegir resultados de una búsqueda anterior", "Choose results from a previous search"),
     "prob_missing": ("No se encontró ese archivo.", "That file was not found."),
-    "err_current": ("Marcó «Comparar con los precios actuales de BAP», pero no eligió un archivo de precios válido.",
-                    "“Compare with current BAP prices” is checked, but no valid prices file was chosen."),
+    "err_current": ("Elija el archivo de precios actuales de Salesforce con «Buscar…» (Excel o CSV con ProductCode, Id y UnitPrice).",
+                    "Choose the Salesforce current-prices file with “Browse…” (Excel or CSV with ProductCode, Id and UnitPrice)."),
+    "err_products_columns": ("Al archivo de productos le faltan columnas que el robot necesita:\n\n{cols}\n\n{path}",
+                             "The products file is missing columns the robot needs:\n\n{cols}\n\n{path}"),
+    "err_current_columns": ("Al archivo de precios actuales le faltan columnas que el robot necesita:\n\n{cols}\n\n"
+                            "Use el archivo de precios descargado de Salesforce, "
+                            "con las columnas ProductCode, Id y UnitPrice. Sin el Id de Salesforce los precios revisados no se "
+                            "pueden exportar.\n\n{path}",
+                            "The current-prices file is missing columns the robot needs:\n\n{cols}\n\n"
+                            "Use the pricebook file downloaded from Salesforce, "
+                            "with the ProductCode, Id and UnitPrice columns. Without the Salesforce Id the reviewed prices "
+                            "can't be exported.\n\n{path}"),
+    "err_file_read": ("No se pudo leer el archivo:\n{path}\n\n{error}", "The file could not be read:\n{path}\n\n{error}"),
     "err_results": ("Elija un archivo de resultados anterior válido para volver a buscar sus problemas.",
                     "Choose a valid previous results file to re-search its problems."),
     "count_need_results": ("Elija el archivo de resultados anterior para ver cuántos productos se buscarán.",
@@ -78,8 +91,8 @@ STRINGS = {
     "products_word": ("productos", "products"),
     "all_products": ("Todos los productos que coinciden con los filtros", "All products that match the filters"),
     "problems_mode": ("Solo los problemas de una búsqueda anterior", "Only the problems from a previous search"),
-    "prob_none": ("Elija el archivo de resultados de una búsqueda anterior (por ejemplo multi_store_price_matches.xlsx).",
-                  "Choose the results file from a previous search (for example multi_store_price_matches.xlsx)."),
+    "prob_none": ("Elija el archivo de resultados de una búsqueda anterior (por ejemplo coincidencias_de_precios.xlsx).",
+                  "Choose the results file from a previous search (for example coincidencias_de_precios.xlsx)."),
     "prob_failed": ("No se pudo leer ese archivo. ¿Es un archivo de resultados del robot?",
                     "Could not read that file. Is it a results file from the robot?"),
     "prob_no_price": ("Sin precio ({n})", "No price ({n})"),
@@ -89,6 +102,14 @@ STRINGS = {
     "prob_price_change_na": ("Cambio de precio grande (sin comparación)", "Big price change (no comparison)"),
     "prob_source": ("Tomados de {name} · {date}", "Taken from {name} · {date}"),
     "filters_title": ("Filtros", "Filters"),
+    "qty_label": ("Cantidad:", "How many:"),
+    "qty_all": ("Todos los productos", "All products"),
+    "qty_first": ("Solo los primeros", "Only the first"),
+    "filters_label": ("Filtros:", "Filters:"),
+    "type_short": ("Tipo:", "Type:"),
+    "contains_short": ("Nombre contiene:", "Name contains:"),
+    "problems_hint": ("La cantidad y los filtros de arriba también se aplican.",
+                      "The amount and filters above also apply."),
     "clear_filters": ("Limpiar filtros", "Clear filters"),
     "will_search": ("Se buscarán {n} de {total} productos", "{n} of {total} products will be searched"),
     "will_search_none": ("Ningún producto coincide con estas opciones.", "No products match these options."),
@@ -99,7 +120,12 @@ STRINGS = {
     "confirm_many": ("Se van a buscar {n} productos. Puede tardar aproximadamente {t}.\n\n¿Continuar?",
                      "{n} products will be searched. This may take about {t}.\n\nContinue?"),
     "name_contains": ("Nombre contiene:", "Name contains:"),
-    "name_hint": ("opcional · ej. leche, arroz, agua", "optional · e.g. leche, arroz, agua"),
+    "name_hint": ("ej. leche, arroz, agua", "e.g. leche, arroz, agua"),
+    "count_loading": ("Cargando el archivo de productos…", "Loading the products file…"),
+    "count_missing": ("No se encontró el archivo de productos.", "The products file was not found."),
+    "count_failed": ("No se pudo leer el archivo de productos.", "The products file could not be read."),
+    "count_python": ("Faltan componentes de Python para leer el archivo de productos.",
+                     "Python components are missing to read the products file."),
     "product_type": ("Tipo de producto:", "Product type:"),
     "all_types": ("(Todos los tipos)", "(All types)"),
     "loading": ("cargando…", "loading…"),
@@ -115,11 +141,33 @@ STRINGS = {
     "recent": ("Recientes ▾", "Recent ▾"),
     "recent_none": ("(todavía no hay archivos recientes)", "(no recent files yet)"),
     "stop": ("■  Detener", "■  Stop"),
-    "card_progress": ("Progreso", "Progress"),
+    "card_progress": ("PROGRESO", "PROGRESS"),
+    "card_options": ("Opciones", "Options"),
+    "card_results": ("Resultados", "Results"),
+    "log_title_card": ("Detalles técnicos", "Technical details"),
+    "log_empty": ("Aquí aparece lo que hace el robot durante la búsqueda.",
+                  "What the robot is doing appears here during the search."),
+    "card_run": ("Buscar", "Search"),
+    "estimate_line": ("Tiempo estimado: ≈ {t} (menos si ya se buscaron antes)",
+                      "Estimated time: ≈ {t} (less if searched recently)"),
+    "stores_line": ("Supermercados: {names}", "Supermarkets: {names}"),
+    "after_hint": ("Al terminar, los resultados se abren solos en «2 · Revisar precios».",
+                   "When it finishes, the results open by themselves in “2 · Review prices”."),
     "ready": ("Listo para empezar.", "Ready to start."),
     "open_results": ("Abrir resultados", "Open results"),
     "open_perf": ("Abrir análisis de desempeño", "Open performance analysis"),
     "open_folder": ("Abrir carpeta", "Open folder"),
+    "tab_search": ("1 · Buscar precios", "1 · Search prices"),
+    "tab_review": ("2 · Revisar precios", "2 · Review prices"),
+    "review_empty_title": ("Todavía no hay precios para revisar", "No prices to review yet"),
+    "review_empty": ("Haga una búsqueda en la pestaña «Buscar precios». Cuando termine, sus resultados se abren aquí automáticamente. "
+                     "También puede abrir el archivo de resultados de una búsqueda anterior.",
+                     "Run a search in the “Search prices” tab. When it finishes, its results open here automatically. "
+                     "You can also open the results file from an earlier search."),
+    "review_open": ("Abrir archivo de resultados…", "Open results file…"),
+    "review_other": ("Abrir otro archivo…", "Open another file…"),
+    "review_file": ("Revisando: {name}", "Reviewing: {name}"),
+    "review_loading": ("Abriendo los resultados…", "Opening the results…"),
     "show_log": ("▸ Mostrar detalles técnicos", "▸ Show technical details"),
     "hide_log": ("▾ Ocultar detalles técnicos", "▾ Hide technical details"),
     "pick_title": ("Elegir archivo de productos", "Choose products file"),
@@ -132,7 +180,11 @@ STRINGS = {
     "err_products": ("Primero elija el archivo de productos con «Buscar…».",
                      "First choose the products file with “Browse…”."),
     "choose_file_first": ("elija primero el archivo de productos", "choose a products file first"),
-    "err_stores": ("Seleccione al menos un supermercado.", "Select at least one supermarket."),
+    "err_stores": ("Seleccione al menos un supermercado en Configuración avanzada → Búsqueda en tiendas.",
+                   "Select at least one supermarket in Advanced settings → Store search."),
+    "err_stores_short": ("seleccione al menos uno", "select at least one"),
+    "all_stores": ("Todos los supermercados", "All supermarkets"),
+    "badge_stores": ("{n} de {total} supermercados", "{n} of {total} supermarkets"),
     "err_limit": ("La cantidad de productos para la prueba debe ser un número mayor que 0.",
                   "The number of products for the test must be a number greater than 0."),
     "reading": ("Leyendo el archivo de productos…", "Reading the products file…"),
@@ -254,13 +306,14 @@ FONT = "Segoe UI" if sys.platform.startswith("win") else "Helvetica"
 # Run options and matcher parameters
 # ---------------------------------------------------------------------------
 RUN_DEFAULTS = {
-    "workers": 6,
+    "stores": [sid for sid, _ in STORES],   # which supermarkets to search
+    "workers": 100,
     "cache_mode": "use",          # use | clear | none
     "CACHE_TTL_HOURS": 12,
     "average_mode": "store_balanced",
-    "output": "multi_store_price_matches.xlsx",
+    "output": "coincidencias_de_precios.xlsx",
     "output_dir": "",              # "" = the output folder
-    "perf_output": "multi_store_performance_analysis.xlsx",
+    "perf_output": "analisis_de_desempeno.xlsx",
     "timestamp": "off",            # off | on  (add date and time to the file names)
     "open_when_done": "none",      # none | results | perf | both
 }
@@ -301,22 +354,34 @@ def _size(kg: float) -> str:
 
 
 # Observed full-catalog run: 5,440 products in about six minutes at 100 workers.
+# Search time per product = latency shared across the simultaneous searches + a floor that more searches
+# can't remove (store response limits, the robot's own work):   seconds = products × (A / workers + B).
+# A and B are fitted to two observed runs with all four stores and no search memory (cache):
+#   • 5,440 products at 100 workers in ≈ 6 min (full catalog benchmark)
+#   • ≈ 80 products at 6 workers in 47 s (cache timestamps from a test run, Sept 2026)
+# Doubling the workers therefore does not halve the time: 50 → ≈ 9 min, 100 → 6 min, 200 → ≈ 4.5 min.
 RUNTIME_BASELINE_PRODUCTS = 5440
 RUNTIME_BASELINE_WORKERS = 100
 RUNTIME_BASELINE_SECONDS = 6 * 60
+RUNTIME_SMALL_WORKERS, RUNTIME_SMALL_PRODUCTS_PER_SECOND = 6, 80 / 47
+_Y1 = RUNTIME_BASELINE_WORKERS * RUNTIME_BASELINE_SECONDS / RUNTIME_BASELINE_PRODUCTS   # workers / products-per-second
+_Y2 = RUNTIME_SMALL_WORKERS / RUNTIME_SMALL_PRODUCTS_PER_SECOND
+RUNTIME_FLOOR_SECONDS = (_Y1 - _Y2) / (RUNTIME_BASELINE_WORKERS - RUNTIME_SMALL_WORKERS)          # B ≈ 0.033 s
+RUNTIME_WORKER_SECONDS = _Y2 - RUNTIME_SMALL_WORKERS * RUNTIME_FLOOR_SECONDS                     # A ≈ 3.3 s
 
 
-def estimate_run_seconds(products, workers):
-    """Rough pre-run estimate scaled from the observed full-catalog benchmark."""
-    return max(0, products) / RUNTIME_BASELINE_PRODUCTS * RUNTIME_BASELINE_SECONDS * RUNTIME_BASELINE_WORKERS / max(1, workers)
+def estimate_run_seconds(products, workers, stores=4):
+    """Pre-run estimate (no search memory). The live countdown during the search uses actual progress."""
+    per_product = RUNTIME_WORKER_SECONDS / max(1, workers) + RUNTIME_FLOOR_SECONDS
+    return round(max(0, products) * per_product * max(1, stores) / 4)
 
 
 def _workers_example(v):
     duration = fmt_duration(estimate_run_seconds(RUNTIME_BASELINE_PRODUCTS, v))
-    return (f"Referencia observada: 5,440 productos con 100 búsquedas simultáneas en ≈ 6 min, sin limitación aparente de las tiendas. "
-            f"Con {v}: ≈ {duration} para la misma lista (estimación proporcional).",
-            f"Observed benchmark: 5,440 products at 100 workers in ≈ 6 min, with no apparent store throttling. "
-            f"At {v}: ≈ {duration} for the same list (rough proportional estimate).")
+    return (f"Lista completa (5,440 productos, 4 supermercados, sin memoria de búsquedas) con {v}: ≈ {duration}. "
+            f"Referencias medidas: 100 → ≈ 6 min; 6 → ≈ 53 min. Más búsquedas ayudan cada vez menos.",
+            f"Full list (5,440 products, 4 supermarkets, no search memory) at {v}: ≈ {duration}. "
+            f"Measured references: 100 → ≈ 6 min; 6 → ≈ 53 min. More searches help less and less.")
 
 
 def _mad_example(v):
@@ -354,6 +419,13 @@ def _jaccard_example(v):
             f"{'do' if dup else 'do not'} count as a duplicate by name.")
 
 
+def _stores_example(value):
+    names = [name for sid, name in STORES if sid in (value or [])]
+    n = len(names)
+    return (f"Se buscará en {n} de {len(STORES)}: " + ", ".join(names),
+            f"Will search {n} of {len(STORES)}: " + ", ".join(names))
+
+
 # Every setting in the Advanced window, in the order the robot uses them.
 #   store:   "run"     = how this window runs the robot
 #            "matcher" = a rule passed to the robot for this run
@@ -362,7 +434,15 @@ def _jaccard_example(v):
 #   example: function(value) -> (es, en) — a live example that updates as the value changes
 SETTINGS_SPEC = [
     # ---- 1. Store search ----------------------------------------------------
-    dict(section="search", store="run", level="basic", key="workers", kind="int", default=6, lo=1, hi=100,
+    dict(section="search", store="run", level="basic", key="stores", kind="stores",
+         default=[sid for sid, _ in STORES],
+         label=("Supermercados", "Supermarkets"),
+         help=("En qué supermercados se buscan los precios. Normalmente se usan todos; quite uno solo si su "
+               "página no funciona o no se necesita para esta búsqueda.",
+               "Which supermarkets prices are searched in. Normally all of them are used; untick one only if "
+               "its website is not working or it is not needed for this search."),
+         example=_stores_example),
+    dict(section="search", store="run", level="basic", key="workers", kind="int", default=100, lo=1, hi=100,
          unit=("a la vez", "at a time"),
          label=("Búsquedas simultáneas", "Simultaneous searches"),
          help=("Cuántos productos se buscan al mismo tiempo. Para la lista completa de 5,440 productos, "
@@ -593,7 +673,7 @@ SETTINGS_SPEC = [
          example_all=lambda vals: (f"Los archivos se guardarán en: {output_folder(vals)}",
                                    f"Files will be saved in: {output_folder(vals)}")),
     dict(section="output", store="run", level="basic", key="output", kind="text",
-         default="multi_store_price_matches.xlsx",
+         default="coincidencias_de_precios.xlsx",
          label=("Archivo de resultados", "Results file"),
          help=("Un renglón por producto con el precio estimado, más una hoja con todos los productos de tienda "
                "revisados. Termine el nombre en .xlsx (recomendado) o .csv.",
@@ -601,7 +681,7 @@ SETTINGS_SPEC = [
                "End the name in .xlsx (recommended) or .csv."),
          example_all=lambda vals: _output_preview(vals, 0)),
     dict(section="output", store="run", level="basic", key="perf_output", kind="text",
-         default="multi_store_performance_analysis.xlsx",
+         default="analisis_de_desempeno.xlsx",
          label=("Análisis de desempeño", "Performance analysis"),
          help=("El informe para revisar la búsqueda: resumen general, comparación con los precios actuales y qué "
                "productos necesitan revisión manual. Debe terminar en .xlsx.",
@@ -616,10 +696,10 @@ SETTINGS_SPEC = [
          label=("Búsquedas anteriores", "Previous searches"),
          help=("Si se agrega la fecha y hora, cada búsqueda crea archivos nuevos y las anteriores se conservan.",
                "With the date and time added, each search creates new files and older ones are kept."),
-         example=lambda v: (("Ej.: multi_store_price_matches_2026-09-25_14-30.xlsx" if v == "on" else
-                             "Ej.: siempre multi_store_price_matches.xlsx (se sobrescribe)"),
-                            ("E.g. multi_store_price_matches_2026-09-25_14-30.xlsx" if v == "on" else
-                             "E.g. always multi_store_price_matches.xlsx (overwritten)"))),
+         example=lambda v: (("Ej.: coincidencias_de_precios_2026-09-25_14-30.xlsx" if v == "on" else
+                             "Ej.: siempre coincidencias_de_precios.xlsx (se sobrescribe)"),
+                            ("E.g. coincidencias_de_precios_2026-09-25_14-30.xlsx" if v == "on" else
+                             "E.g. always coincidencias_de_precios.xlsx (overwritten)"))),
     dict(section="output", store="run", level="basic", key="open_when_done", kind="choice", default="none",
          choices=[("none", ("No abrir nada", "Don't open anything")),
                   ("results", ("Abrir el archivo de resultados", "Open the results file")),
@@ -721,6 +801,8 @@ def fmt_number(value) -> str:
 
 
 def display_value(p, value) -> str:
+    if p["kind"] == "stores":
+        return ",".join(value or [])
     if p["kind"] == "percent":
         return fmt_number(round(float(value) * 100, 4))
     if p["kind"] == "choice":
@@ -735,6 +817,12 @@ def parse_param(p, text: str):
     """Convert what the user typed into the value used by the code. Raises ValueError with a readable message."""
     if p["kind"] in ("text", "folder"):
         return str(text).strip()
+    if p["kind"] == "stores":
+        chosen = {part.strip() for part in str(text).split(",")}
+        stores = [sid for sid, _ in STORES if sid in chosen]
+        if not stores:
+            raise ValueError(t("err_stores_short"))
+        return stores
     text = str(text).strip().replace(",", ".").replace("%", "").strip()
     if p["kind"] == "choice":
         for val, pair in p["choices"]:
@@ -1073,52 +1161,6 @@ def read_product_rows(path: Path) -> list[list[str]]:
     return rows
 
 
-def read_last_problems(path: Path) -> dict:
-    """Product codes from a previous results file, grouped by problem type."""
-    import csv
-    if path.suffix.lower() == ".csv":
-        with path.open(encoding="utf-8-sig", newline="") as f:
-            reader = csv.reader(f)
-            headers = next(reader)
-            data = list(reader)
-    else:
-        from openpyxl import load_workbook
-        wb = load_workbook(path, read_only=True, data_only=True)
-        try:
-            ws = wb["Summary"] if "Summary" in wb.sheetnames else wb.active
-            it = ws.iter_rows(values_only=True)
-            headers = [_text(h) for h in next(it)]
-            data = [list(r) for r in it]
-        finally:
-            wb.close()
-    idx = {h: i for i, h in enumerate(headers)}
-    i_code, i_est = idx["Código de producto"], idx["Estimated New Product Price"]
-    i_flag, i_err = idx["Quality Flag"], idx.get("Request Error")
-    # added by the launcher when "Compare with current BAP prices" was on
-    i_change = next((i for i, h in enumerate(headers) if str(h).startswith("Price Change >")), None)
-
-    def get(r, i):
-        return r[i] if i is not None and i < len(r) else None
-
-    out = {"no_price": [], "review": [], "errors": [], "price_change": [], "total": 0,
-           "has_price_change": i_change is not None}
-    for r in data:
-        code = _code(get(r, i_code))
-        if not code:
-            continue
-        out["total"] += 1
-        flag, err = _text(get(r, i_flag)), _text(get(r, i_err))
-        if err or "REQUEST ERROR" in flag:
-            out["errors"].append(code)
-        if _money(get(r, i_est)) is None:
-            out["no_price"].append(code)
-        elif flag != "OK":
-            out["review"].append(code)
-        if _text(get(r, i_change)).upper() == "YES":
-            out["price_change"].append(code)
-    return out
-
-
 def warm_products_cache() -> None:
     """In the background, pre-read the usual products.xlsx so choosing it later is instant."""
     def work():
@@ -1140,12 +1182,10 @@ class Settings:
         self.last = {
             "lang": "es",
             "products": "",   # never pre-filled: staff choose the file each time
-            "stores": [s for s, _ in STORES],
             "mode": "test",
             "limit": 20,
             "contains": "",
             "type": "",   # "" = all types
-            "problems": {"no_price": True, "review": True, "errors": True, "price_change": True},
             "perf": True,     # create the performance analysis workbook
             "recent": {"products": [], "current": [], "results": []},
         }
@@ -1158,9 +1198,22 @@ class Settings:
         for k, v in (data.get("run") or {}).items():
             if k in self.run:
                 self.run[k] = v
+        # The supermarkets used to be chosen on the main window (saved under "last"); carry that choice over.
+        if "stores" not in (data.get("run") or {}) and isinstance((data.get("last") or {}).get("stores"), list):
+            self.run["stores"] = data["last"]["stores"]
+        chosen = self.run.get("stores")
+        chosen = [sid for sid, _ in STORES if isinstance(chosen, list) and sid in chosen]
+        self.run["stores"] = chosen or list(RUN_DEFAULTS["stores"])
         for k, v in (data.get("matcher") or {}).items():
             if k in self.matcher:
                 self.matcher[k] = v
+        # The default file names became Spanish: move people still on the old English defaults.
+        for key, old in (("output", "multi_store_price_matches.xlsx"), ("perf_output", "multi_store_performance_analysis.xlsx")):
+            if self.run.get(key) == old:
+                self.run[key] = RUN_DEFAULTS[key]
+        # The default went from 6 to 100 simultaneous searches: move people still on the old default once.
+        if not data.get("workers_default_version") and self.run.get("workers") == 6:
+            self.run["workers"] = 100
         # Migrate the previous shipped 30% default once; retain other custom limits.
         if not data.get("review_policy_version") and self.matcher.get("PRICE_CHANGE_REVIEW_THRESHOLD") == 0.30:
             self.matcher["PRICE_CHANGE_REVIEW_THRESHOLD"] = PRICE_CHANGE_REVIEW_THRESHOLD
@@ -1176,7 +1229,7 @@ class Settings:
     def save(self):
         try:
             SETTINGS_FILE.write_text(
-                json.dumps({"run": self.run, "matcher": self.matcher, "last": self.last, "review_policy_version": 1}, indent=2, ensure_ascii=False),
+                json.dumps({"run": self.run, "matcher": self.matcher, "last": self.last, "review_policy_version": 1, "workers_default_version": 2}, indent=2, ensure_ascii=False),
                 encoding="utf-8",
             )
         except Exception:
@@ -1195,15 +1248,15 @@ class Settings:
 class Card(tk.Frame):
     """White panel with a title."""
 
-    def __init__(self, parent, title: str, step: str | None = None):
+    def __init__(self, parent, title: str, step: str | None = None, compact: bool = False):
         super().__init__(parent, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1)
         head = tk.Frame(self, bg=C_CARD)
-        head.pack(fill="x", padx=16, pady=(12, 4))
+        head.pack(fill="x", padx=14 if compact else 16, pady=(8, 2) if compact else (12, 4))
         if step:
             tk.Label(head, text=step, bg=C_ACCENT, fg="white", font=(FONT, 9, "bold"), width=2).pack(side="left", padx=(0, 8))
         tk.Label(head, text=title, bg=C_CARD, fg=C_TEXT, font=(FONT, 11, "bold")).pack(side="left")
         self.body = tk.Frame(self, bg=C_CARD)
-        self.body.pack(fill="both", expand=True, padx=16, pady=(4, 14))
+        self.body.pack(fill="both", expand=True, padx=14 if compact else 16, pady=(2, 10) if compact else (4, 14))
 
 
 class LangToggle(tk.Frame):
@@ -1531,6 +1584,8 @@ class AdvancedWindow(tk.Toplevel):
             frow.pack(fill="x", padx=14, pady=(6, 0))
             ttk.Entry(frow, textvariable=var).pack(side="left", fill="x", expand=True)
             ttk.Button(frow, text=t("browse"), command=lambda v=var: self._pick_folder(v)).pack(side="left", padx=(8, 0))
+        if p["kind"] == "stores":
+            self._store_boxes(card, var)
         if p["kind"] == "choice":
             radios = tk.Frame(card, bg=C_CARD)
             radios.pack(fill="x", padx=14, pady=(6, 0))
@@ -1544,6 +1599,38 @@ class AdvancedWindow(tk.Toplevel):
         tk.Label(card, text=t("default_is", v=default_text), bg=C_CARD, fg="#8A958C", font=(FONT, 8),
                  anchor="w").pack(fill="x", padx=14, pady=(2, 10))
         var.trace_add("write", lambda *_a, k=key: self._refresh(k))
+
+    def _store_boxes(self, card, var):
+        """One checkbox per supermarket, kept in sync with the setting's text value ("super99,rey,...")."""
+        row = tk.Frame(card, bg=C_CARD)
+        row.pack(fill="x", padx=14, pady=(6, 0))
+        boxes = {}
+        syncing = [False]
+
+        def from_boxes(*_a):
+            if not syncing[0]:
+                var.set(",".join(sid for sid, _ in STORES if boxes[sid].get()))
+
+        def from_var(*_a):
+            chosen = {part.strip() for part in var.get().split(",")}
+            syncing[0] = True
+            try:
+                for sid, b in boxes.items():
+                    if b.get() != (sid in chosen):
+                        b.set(sid in chosen)
+            finally:
+                syncing[0] = False
+
+        chosen = {part.strip() for part in var.get().split(",")}
+        for sid, name in STORES:
+            b = tk.BooleanVar(value=sid in chosen)
+            ttk.Checkbutton(row, text=name, variable=b).pack(side="left", padx=(0, 22))
+            b.trace_add("write", from_boxes)
+            boxes[sid] = b
+        ttk.Button(row, text=t("all"), style="Link.TButton",
+                   command=lambda: var.set(",".join(sid for sid, _ in STORES))).pack(side="right")
+        var.trace_add("write", from_var)
+        self.store_boxes = boxes
 
     def _pick_folder(self, var):
         start = var.get().strip() or str(BASE_DIR)
@@ -1561,6 +1648,8 @@ class AdvancedWindow(tk.Toplevel):
         return vals
 
     def _default_text(self, p) -> str:
+        if p["kind"] == "stores":
+            return t("all_stores")
         if p["kind"] == "folder":
             return t("project_folder")
         if p["kind"] == "choice":
@@ -1639,7 +1728,7 @@ class AdvancedWindow(tk.Toplevel):
                         self.examples[q["key"]].configure(text="")
         if p.get("example"):
             try:
-                text = L(p["example"](value if error is None else p["default"]))
+                text = "" if error and p["kind"] == "stores" else L(p["example"](value if error is None else p["default"]))
             except Exception:
                 text = ""
             example.configure(text=("→ " + text) if text else "")
@@ -1723,6 +1812,55 @@ class AdvancedWindow(tk.Toplevel):
 # ---------------------------------------------------------------------------
 # Main window
 # ---------------------------------------------------------------------------
+def input_files_problem(products, current) -> str | None:
+    """A message when the products or current-prices file lacks a required column (or can't be read);
+    None when both are fine. The search can't start until this is None."""
+    from current_prices import product_columns_missing, current_prices_columns_missing, read_current_rows
+    bullets = lambda cols: "\n".join("•  " + c for c in cols)
+    try:
+        missing = product_columns_missing(products)
+    except Exception as exc:
+        return t("err_file_read", path=products, error=exc)
+    if missing:
+        return t("err_products_columns", cols=bullets(missing), path=products)
+    try:
+        missing = current_prices_columns_missing(current)
+        if missing:
+            return t("err_current_columns", cols=bullets(missing), path=current)
+        rows = read_current_rows(current)   # also catches duplicate codes and invalid prices
+        if rows and not any(row.get("Id") for row in rows):
+            return t("err_current_columns", cols="•  Id (" + L(("columna vacía", "empty column")) + ")", path=current)
+    except Exception as exc:
+        return t("err_file_read", path=current, error=exc)
+    return None
+
+
+def results_are_self_contained(path) -> bool:
+    """True when a results file can be reviewed and exported without the current-prices file."""
+    path = Path(path)
+    saved = path.with_suffix(path.suffix + ".review.json")
+    try:
+        if saved.is_file() and json.loads(saved.read_text(encoding="utf-8")).get("template_rows"):
+            return True
+    except (ValueError, OSError):
+        pass
+    try:
+        if path.suffix.lower() == ".csv":
+            with path.open(encoding="utf-8-sig", newline="") as stream:
+                headers = next(csv.reader(stream), [])
+        else:
+            from openpyxl import load_workbook
+            wb = load_workbook(path, read_only=True)
+            try:
+                ws = wb["Summary"] if "Summary" in wb.sheetnames else wb.active
+                headers = next(ws.iter_rows(max_row=1, values_only=True), ())
+            finally:
+                wb.close()
+        return "Salesforce Id" in headers
+    except Exception:
+        return False
+
+
 class App:
     def __init__(self, root: tk.Tk):
         global LANG
@@ -1746,16 +1884,13 @@ class App:
         self._opts_state = "loading"          # loading | ok | no_file | missing_file | error
         self._opts_error = ""
         self._opts_after = None
-        self._problems: dict | None = None    # codes from the last results file
-        self._problems_state = "none"         # loading | ok | none | missing | error
-        self._problems_after = None
         # file choices for this session only (never pre-filled when the app opens)
-        self.session = {"compare": False, "current": "", "results": ""}
+        self.session = {"current": ""}
         self._log_text = ""
         self.progress_was_done = False
 
         root.configure(bg=C_BG)
-        fit_window(root, 1040, 960, 760, 640)
+        fit_window(root, 1250, 900, 820, 640)
         try:
             self._icons = [app_icon(64), app_icon(32), app_icon(16)]
             root.iconphoto(True, *self._icons)   # also used by the Advanced settings window
@@ -1767,7 +1902,6 @@ class App:
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         root.after(100, self._poll)
         self.load_options()
-        self.load_problems()
         warm_products_cache()
 
     # -- style --------------------------------------------------------------
@@ -1811,6 +1945,11 @@ class App:
                background=[("disabled", "#A5C8A7"), ("active", C_ACCENT_DARK), ("pressed", C_ACCENT_DARK)],
                foreground=[("disabled", "white")])
         st.configure("Stop.TButton", foreground=C_ERROR, padding=(14, 8), font=(FONT, 10, "bold"))
+        st.configure("Start.TButton", background=C_ACCENT, foreground="white", padding=(18, 10),
+                     font=(FONT, 12, "bold"), bordercolor=C_ACCENT_DARK)
+        st.map("Start.TButton",
+               background=[("disabled", "#A5C8A7"), ("active", C_ACCENT_DARK), ("pressed", C_ACCENT_DARK)],
+               foreground=[("disabled", "white")])
         st.map("Stop.TButton", foreground=[("disabled", "#A7B0A9")])
         st.configure("Link.TButton", foreground=C_ACCENT, padding=(4, 2), relief="flat", borderwidth=0, background=C_CARD)
         st.map("Link.TButton", background=[("active", C_CARD)], foreground=[("active", C_ACCENT_DARK)])
@@ -1831,6 +1970,18 @@ class App:
             st.map(name, background=[("pressed", hover), ("active", hover)],
                    lightcolor=[("pressed", hover), ("active", hover)], darkcolor=[("pressed", hover), ("active", hover)])
         st.configure("TNotebook", background=C_BG, borderwidth=0)
+        # main tabs: sit on the green header strip; the selected tab joins the page below it
+        st.configure("Main.TNotebook", background=C_HEADER, borderwidth=0, tabmargins=(18, 0, 0, 0))
+        st.configure("Main.TNotebook.Tab", font=(FONT, 11, "bold"), padding=(22, 9), background="#2F6A3D",
+                     foreground="#D7EAD9", borderwidth=0, lightcolor=C_HEADER, bordercolor=C_HEADER, focuscolor=C_HEADER)
+        # Same tab layout as the theme but without the focus element, so clicking a tab draws no focus box.
+        st.layout("Main.TNotebook.Tab", [("Notebook.tab", {"sticky": "nswe", "children": [
+            ("Notebook.padding", {"side": "top", "sticky": "nswe", "children": [
+                ("Notebook.label", {"side": "top", "sticky": ""})]})]})])
+        st.map("Main.TNotebook.Tab", background=[("selected", C_BG), ("active", "#3B7A49")],
+               foreground=[("selected", C_HEADER), ("active", "white")],
+               lightcolor=[("selected", C_BG)], bordercolor=[("selected", C_BG)],
+               padding=[("selected", (22, 9))], expand=[("selected", (0, 0, 0, 0))])
         st.configure("TNotebook.Tab", padding=(14, 6), font=(FONT, 10))
 
     # -- language -----------------------------------------------------------
@@ -1843,17 +1994,21 @@ class App:
         LANG = lang
         self.settings.last["lang"] = lang
         self.settings.save()
-        self._log_text = self.log.get("1.0", "end-1c")
+        self._log_text = "" if getattr(self, "_log_placeholder", False) else self.log.get("1.0", "end-1c")
+        on_review_tab = self.tabs.select() == str(self.review_tab)
+        # The review tab is kept as it is (the price sheet is not read again); only its texts change.
         for w in self.root.winfo_children():
-            if not isinstance(w, tk.Toplevel):
+            if not isinstance(w, tk.Toplevel) and w is not self.review_tab:
                 w.destroy()
         self._build()
         self._apply_options()
-        self._apply_problems()
         self._render_status()   # status + details under the progress bar, now in the new language
         if self.output_path and self.output_path.exists() and self.progress_was_done:
             self.progress.configure(maximum=1, value=1)
             self._show_results_row()
+        if on_review_tab:
+            self.tabs.select(self.review_tab)
+        self._relabel_review_tab()
 
     def on_lang_click(self, lang: str):
         if self.proc and lang != LANG:
@@ -1865,18 +2020,15 @@ class App:
         """Copy the current form values into settings.last (no validation)."""
         last = self.settings.last
         last["products"] = self.products_var.get().strip()
-        last["stores"] = [sid for sid, _ in STORES if self.store_vars[sid].get()]
-        last["mode"] = self.mode_var.get()
+        last["mode"] = "test" if self.scope_var.get() == "first" else "all"   # "problems" is chosen again each session
         try:
             last["limit"] = max(1, int(self.limit_var.get()))
         except Exception:
             pass
         last["contains"] = self.contains_var.get().strip()
         last["type"] = self.selected_type()
-        last["problems"] = {k: bool(v.get()) for k, v in self.prob_vars.items()}
         last["perf"] = bool(self.perf_var.get())
-        self.session.update(compare=bool(self.compare_var.get()), current=self.current_var.get().strip(),
-                            results=self.results_var.get().strip())
+        self.session.update(current=self.current_var.get().strip())
 
     def selected_type(self) -> str:
         value = self.type_var.get()
@@ -1891,29 +2043,49 @@ class App:
         header.pack(fill="x")
         titles = tk.Frame(header, bg=C_HEADER)
         titles.pack(side="left", fill="x", expand=True)
-        tk.Label(titles, text=t("app_title"), bg=C_HEADER, fg="white", font=(FONT, 18, "bold")).pack(anchor="w", padx=22, pady=(16, 0))
-        tk.Label(titles, text=t("app_subtitle"), bg=C_HEADER, fg="#CFE3D2", font=(FONT, 10)).pack(anchor="w", padx=22, pady=(0, 14))
+        tk.Label(titles, text=t("app_title"), bg=C_HEADER, fg="white", font=(FONT, 17, "bold")).pack(anchor="w", padx=22, pady=(10, 0))
+        tk.Label(titles, text=t("app_subtitle"), bg=C_HEADER, fg="#CFE3D2", font=(FONT, 10)).pack(anchor="w", padx=22, pady=(0, 8))
         LangToggle(header, C_HEADER, self.on_lang_click).pack(side="right", padx=22)
 
-        # Everything below the header scrolls, so the technical details are always reachable.
-        outer = tk.Frame(self.root, bg=C_BG)
-        outer.pack(fill="both", expand=True)
-        self.canvas = tk.Canvas(outer, bg=C_BG, highlightthickness=0, bd=0, yscrollincrement=1)
-        self.canvas.pack(side="left", fill="both", expand=True)
-        pack_opts = dict(side="right", fill="y", padx=(0, 3), pady=3, before=self.canvas)
-        vsb, setter = slim_scrollbar(outer, self.canvas.yview, autohide_pack=pack_opts)
-        self.canvas.configure(yscrollcommand=setter)
-        register_scroll(self.canvas)
-        page = tk.Frame(self.canvas, bg=C_BG)
-        page_id = self.canvas.create_window((0, 0), window=page, anchor="nw")
-        page.bind("<Configure>", lambda e: self.canvas.configure(scrollregion=self.canvas.bbox("all")))
-        self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(page_id, width=e.width))
-        main = tk.Frame(page, bg=C_BG)
-        main.pack(fill="both", expand=True, padx=18, pady=14)
+        # Two tabs below the header: search, then review. The header strip continues behind the tabs.
+        tabbar_pad = tk.Frame(self.root, bg=C_HEADER, height=4)
+        tabbar_pad.pack(fill="x")
+        self.tabs = ttk.Notebook(self.root, style="Main.TNotebook", takefocus=False)
+        self.tabs.pack(fill="both", expand=True)
+        search_tab = tk.Frame(self.tabs, bg=C_BG)
+        # The review tab belongs to the window (not the notebook) so it survives a language change
+        # without reading the price sheet again.
+        existing = getattr(self, "review_tab", None)
+        keep_review = existing is not None and existing.winfo_exists()
+        if not keep_review:
+            self.review_tab = tk.Frame(self.root, bg=C_BG)
+        self.tabs.add(search_tab, text=t("tab_search"))
+        self.tabs.add(self.review_tab, text=t("tab_review"))
+        self.review_tab.lift(self.tabs)   # stack above the (possibly newer) notebook so it is visible
+        if not keep_review:
+            self._build_review_tab()
 
-        # 1. products file
-        c1 = Card(main, t("card_products"), "1")
-        c1.pack(fill="x")
+        # Two columns that both reach the bottom of the window, with no scrolling:
+        #   left  = the steps (1 files, 2 which products, 3 options, 4 search + progress)
+        #   right = technical details, which takes whatever height is left.
+        page = search_tab
+        main = tk.Frame(page, bg=C_BG)
+        main.pack(fill="both", expand=True, padx=14, pady=10)
+        main.columnconfigure(0, weight=3, uniform="cols")
+        main.columnconfigure(1, weight=2, uniform="cols")   # left: steps 1-4 · right: technical details
+        main.rowconfigure(0, weight=1)
+        left = tk.Frame(main, bg=C_BG)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        left.columnconfigure(0, weight=1)
+        left.rowconfigure(3, weight=1)
+        right = tk.Frame(main, bg=C_BG)
+        right.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(1, weight=1)
+
+        # 1. files
+        c1 = Card(left, t("card_products"), "1", compact=True)
+        c1.grid(row=0, column=0, sticky="ew")
         files = tk.Frame(c1.body, bg=C_CARD)
         files.pack(fill="x")
         files.columnconfigure(1, weight=1)
@@ -1922,147 +2094,95 @@ class App:
         ttk.Entry(files, textvariable=self.products_var).grid(row=0, column=1, sticky="ew", padx=(10, 0))
         self._recent_button(files, "products", self.products_var).grid(row=0, column=2, padx=(8, 0))
         ttk.Button(files, text=t("browse"), command=self.pick_products).grid(row=0, column=3, padx=(6, 0))
-
-        self.perf_var = tk.BooleanVar(value=bool(last.get("perf", True)))
-        self.perf_check = ttk.Checkbutton(c1.body, text=t("perf_check"), variable=self.perf_var)
-        self.perf_check.pack(anchor="w", pady=(12, 0))
-        perf_note = tk.Label(c1.body, text=t("perf_hint"), bg=C_CARD, fg=C_MUTED, font=(FONT, 9),
-                             anchor="w", justify="left")
-        perf_note.pack(fill="x", padx=(24, 0), pady=(2, 0))
-        auto_wrap(perf_note)
-
-        self.compare_var = tk.BooleanVar(value=self.session["compare"])
-        self.compare_check = ttk.Checkbutton(c1.body, text=t("compare_check"), variable=self.compare_var,
-                                             command=self._compare_changed)
-        self.compare_check.pack(anchor="w", pady=(10, 0))
-        self.cmp_box = tk.Frame(c1.body, bg=C_CARD)   # only shown while the box is ticked
-        cmp_row = tk.Frame(self.cmp_box, bg=C_CARD)
-        cmp_row.pack(fill="x", pady=(4, 0))
+        tk.Label(files, text=t("current_label"), bg=C_CARD, fg=C_TEXT, font=(FONT, 10)).grid(row=1, column=0, sticky="w", pady=(8, 0))
         self.current_var = tk.StringVar(value=self.session["current"])
-        self.current_entry = ttk.Entry(cmp_row, textvariable=self.current_var)
-        self.current_entry.pack(side="left", fill="x", expand=True)
-        self._recent_button(cmp_row, "current", self.current_var).pack(side="left", padx=(8, 0))
-        self.current_btn = ttk.Button(cmp_row, text=t("browse"), command=self.pick_current)
-        self.current_btn.pack(side="left", padx=(6, 0))
-        self.current_note = tk.Label(self.cmp_box, text=t("compare_hint"), bg=C_CARD, fg=C_MUTED, font=(FONT, 9),
-                                     anchor="w", justify="left")
-        self.current_note.pack(fill="x", pady=(4, 0))
-        auto_wrap(self.current_note)
+        ttk.Entry(files, textvariable=self.current_var).grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=(8, 0))
+        self._recent_button(files, "current", self.current_var).grid(row=1, column=2, padx=(8, 0), pady=(8, 0))
+        ttk.Button(files, text=t("browse"), command=self.pick_current).grid(row=1, column=3, padx=(6, 0), pady=(8, 0))
+        current_note = tk.Label(files, text=t("compare_hint"), bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w", justify="left")
+        current_note.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(2, 0))
+        auto_wrap(current_note)
 
-        # 2. stores
-        c2 = Card(main, t("card_stores"), "2")
-        c2.pack(fill="x", pady=(12, 0))
-        srow = tk.Frame(c2.body, bg=C_CARD)
-        srow.pack(fill="x")
-        self.store_vars = {}
-        for sid, name in STORES:
-            v = tk.BooleanVar(value=sid in last["stores"])
-            ttk.Checkbutton(srow, text=name, variable=v).pack(side="left", padx=(0, 22))
-            v.trace_add("write", lambda *_: self.update_count())
-            self.store_vars[sid] = v
-        ttk.Button(srow, text=t("all"), style="Link.TButton",
-                   command=lambda: [v.set(True) for v in self.store_vars.values()]).pack(side="right")
-
-        # 3. which products
-        c3 = Card(main, t("card_which"), "3")
-        c3.pack(fill="x", pady=(12, 0))
-        mode = last["mode"] if last["mode"] in ("test", "all", "problems") else "test"
-        if mode == "problems" and not self.session.get("results"):
-            mode = "test"  # its results file is chosen each time, so don't open on an empty choice
-        self.mode_var = tk.StringVar(value=mode)
+        # 2. which products — how many, then the two filters; they combine
+        # (e.g. the first 50 "Tipo A seco" products whose name contains "leche").
+        c3 = Card(left, t("card_which"), "2", compact=True)
+        c3.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        self.scope_var = tk.StringVar(value="first" if last["mode"] == "test" else "all")
         self.limit_var = tk.StringVar(value=str(last["limit"]))
         self.type_var = tk.StringVar(value=last["type"] or t("all_types"))
-        r1 = tk.Frame(c3.body, bg=C_CARD)
-        r1.pack(fill="x")
-        ttk.Radiobutton(r1, text=t("test_first"), value="test", variable=self.mode_var).pack(side="left")
-        self.limit_spin = ttk.Spinbox(r1, from_=1, to=10000, textvariable=self.limit_var, width=6)
-        self.limit_spin.pack(side="left", padx=6)
-        tk.Label(r1, text=t("products_word"), bg=C_CARD, fg=C_TEXT, font=(FONT, 10)).pack(side="left")
-        self.test_type_combo = ttk.Combobox(r1, textvariable=self.type_var, values=[t("all_types")], state="readonly", width=24)
-        self.test_type_combo.pack(side="left", padx=8)
-        self.all_radio = ttk.Radiobutton(c3.body, text=t("all_products"), value="all", variable=self.mode_var)
-        self.all_radio.pack(anchor="w", pady=(6, 0))
-        # filters: only shown (and only used) while "all products that match the filters" is selected
-        self.filt_box = tk.Frame(c3.body, bg=C_CARD)
-
-        self.problems_radio = ttk.Radiobutton(c3.body, text=t("problems_mode"), value="problems", variable=self.mode_var)
-        self.problems_radio.pack(anchor="w", pady=(6, 0))
-        prob_box = tk.Frame(c3.body, bg=C_CARD)   # only shown while this option is selected
-        self.prob_box = prob_box
-        res_row = tk.Frame(prob_box, bg=C_CARD)
-        res_row.pack(fill="x")
-        tk.Label(res_row, text=t("results_label"), bg=C_CARD, fg=C_TEXT, font=(FONT, 10)).pack(side="left")
-        self.results_var = tk.StringVar(value=self.session["results"])
-        self.results_entry = ttk.Entry(res_row, textvariable=self.results_var)
-        self.results_entry.pack(side="left", fill="x", expand=True, padx=(10, 0))
-        self._recent_button(res_row, "results", self.results_var).pack(side="left", padx=(8, 0))
-        self.results_btn = ttk.Button(res_row, text=t("browse"), command=self.pick_results)
-        self.results_btn.pack(side="left", padx=(6, 0))
-        chk_row = tk.Frame(prob_box, bg=C_CARD)
-        chk_row.pack(fill="x", pady=(6, 0))
-        self.prob_vars = {k: tk.BooleanVar(value=bool(last["problems"].get(k, True)))
-                          for k in PROBLEM_KINDS}
-        self.prob_checks = {}
-        for k in PROBLEM_KINDS:
-            cb = ttk.Checkbutton(chk_row, text=t("prob_" + k, n="…"), variable=self.prob_vars[k])
-            cb.pack(side="left", padx=(0, 16))
-            self.prob_checks[k] = cb
-        self.prob_note = tk.Label(prob_box, text="", bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w", justify="left")
-        self.prob_note.pack(fill="x", pady=(4, 0))
-        auto_wrap(self.prob_note)
-
-        fhead = tk.Frame(self.filt_box, bg=C_CARD)
-        fhead.pack(fill="x")
-        tk.Label(fhead, text=t("filters_title"), bg=C_CARD, fg=C_TEXT, font=(FONT, 10, "bold")).pack(side="left")
-        ttk.Button(fhead, text=t("clear_filters"), style="Link.TButton", command=self.clear_filters).pack(side="right")
-
-        grid = tk.Frame(self.filt_box, bg=C_CARD)
-        grid.pack(fill="x", pady=(4, 0))
-        grid.columnconfigure(1, weight=1)
-        tk.Label(grid, text=t("product_type"), bg=C_CARD, fg=C_TEXT, font=(FONT, 10)).grid(row=0, column=0, sticky="w", pady=(3, 0))
-        self.type_combo = ttk.Combobox(grid, textvariable=self.type_var, values=[t("all_types")], state="readonly")
-        self.type_combo.grid(row=0, column=1, sticky="ew", padx=(10, 0), pady=(3, 0))
-        self.type_note = tk.Label(grid, text=t("loading"), bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w")
-        self.type_note.grid(row=1, column=1, sticky="w", padx=(10, 0))
-        tk.Label(grid, text=t("name_contains"), bg=C_CARD, fg=C_TEXT, font=(FONT, 10)).grid(row=2, column=0, sticky="w", pady=(8, 0))
         self.contains_var = tk.StringVar(value=last["contains"])
-        ttk.Entry(grid, textvariable=self.contains_var).grid(row=2, column=1, sticky="ew", padx=(10, 0), pady=(8, 0))
-        tk.Label(grid, text=t("name_hint"), bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w").grid(row=3, column=1, sticky="w", padx=(10, 0))
+        form = tk.Frame(c3.body, bg=C_CARD)
+        form.pack(fill="x")
+        form.columnconfigure(1, weight=1)
+        lbl = dict(bg=C_CARD, fg=C_TEXT, font=(FONT, 10, "bold"), anchor="w")
+        tk.Label(form, text=t("qty_label"), **lbl).grid(row=0, column=0, sticky="w", padx=(0, 14))
+        qty = tk.Frame(form, bg=C_CARD)
+        qty.grid(row=0, column=1, sticky="w")
+        ttk.Radiobutton(qty, text=t("qty_all"), value="all", variable=self.scope_var).pack(side="left")
+        ttk.Radiobutton(qty, text=t("qty_first"), value="first", variable=self.scope_var).pack(side="left", padx=(22, 0))
+        self.limit_spin = ttk.Spinbox(qty, from_=1, to=10000, textvariable=self.limit_var, width=6)
+        self.limit_spin.pack(side="left", padx=6)
+        tk.Label(qty, text=t("products_word"), bg=C_CARD, fg=C_TEXT, font=(FONT, 10)).pack(side="left")
 
-        self.count_lbl = tk.Label(c3.body, text="", bg=C_CARD, fg=C_ACCENT_DARK, font=(FONT, 10, "bold"), anchor="w")
-        self.count_lbl.pack(fill="x", pady=(10, 0))
+        tk.Label(form, text=t("filters_label"), **lbl).grid(row=1, column=0, sticky="nw", padx=(0, 14), pady=(8, 0))
+        self.filt_box = tk.Frame(form, bg=C_CARD)
+        self.filt_box.grid(row=1, column=1, sticky="ew", pady=(6, 0))
+        self.filt_box.columnconfigure(1, weight=2)
+        self.filt_box.columnconfigure(3, weight=3)
+        tk.Label(self.filt_box, text=t("type_short"), bg=C_CARD, fg=C_TEXT, font=(FONT, 10)).grid(row=0, column=0, sticky="w")
+        self.type_combo = ttk.Combobox(self.filt_box, textvariable=self.type_var, values=[t("all_types")], state="readonly", width=14)
+        self.type_combo.grid(row=0, column=1, sticky="ew", padx=(6, 12))
+        tk.Label(self.filt_box, text=t("contains_short"), bg=C_CARD, fg=C_TEXT, font=(FONT, 10)).grid(row=0, column=2, sticky="w")
+        ttk.Entry(self.filt_box, textvariable=self.contains_var, width=10).grid(row=0, column=3, sticky="ew", padx=(6, 0))
+        hint_row = tk.Frame(self.filt_box, bg=C_CARD)
+        hint_row.grid(row=1, column=3, sticky="ew", padx=(6, 0))
+        tk.Label(hint_row, text=t("name_hint"), bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w").pack(side="left")
+        ttk.Button(hint_row, text=t("clear_filters"), style="Link.TButton", command=self.clear_filters).pack(side="right")
 
-        for var in (self.mode_var, self.limit_var, self.type_var, self.contains_var, *self.prob_vars.values()):
-            var.trace_add("write", lambda *_: self.update_count())
-        self._mode_changed()
+        # 3. options — fills the rest of the left column
+        c_opt = Card(left, t("card_options"), "3", compact=True)
+        c_opt.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        self.perf_var = tk.BooleanVar(value=bool(last.get("perf", True)))
+        opt_row = tk.Frame(c_opt.body, bg=C_CARD)
+        opt_row.pack(fill="x")
+        ttk.Button(opt_row, text=t("advanced_btn"), command=self.open_advanced).pack(side="left")
+        self.perf_check = ttk.Checkbutton(opt_row, text=t("perf_check"), variable=self.perf_var)
+        self.perf_check.pack(side="left", padx=(16, 0))
+        self.badge = tk.Label(c_opt.body, text="", bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w", justify="left")
+        self.badge.pack(fill="x", pady=(6, 0))
+        self.stores_lbl = tk.Label(c_opt.body, text="", bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w", justify="left")
+        self.stores_lbl.pack(fill="x")
+        auto_wrap(self.stores_lbl)
 
-        # action bar
-        bar = tk.Frame(main, bg=C_BG)
-        bar.pack(fill="x", pady=(14, 0))
-        ttk.Button(bar, text=t("advanced_btn"), command=self.open_advanced).pack(side="left")
-        ttk.Button(bar, text=L(("Abrir revisión…", "Open review…")),
-                   command=lambda: self.open_review(choose=True)).pack(side="left", padx=8)
-        self.badge = tk.Label(bar, text="", bg=C_BG, fg=C_MUTED, font=(FONT, 9))
-        self.badge.pack(side="left", padx=10)
-        self.start_btn = ttk.Button(bar, text=t("start"), style="Accent.TButton", command=self.start)
-        self.start_btn.pack(side="right")
-        self.stop_btn = ttk.Button(bar, text=t("stop"), style="Stop.TButton", command=self.stop, state="disabled")
-        self.stop_btn.pack(side="right", padx=8)  # always visible, greyed out unless a search is running
-
-        # progress
-        c4 = Card(main, t("card_progress"))
-        c4.pack(fill="both", expand=True, pady=(14, 0))
-        self.status_lbl = tk.Label(c4.body, text=t("ready"), bg=C_CARD, fg=C_TEXT, font=(FONT, 11, "bold"), anchor="w")
+        # 4. run — the rest of the left column
+        c4 = Card(left, t("card_run"), "4", compact=True)
+        c4.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
+        self.count_lbl = tk.Label(c4.body, text="", bg=C_CARD, fg=C_ACCENT_DARK, font=(FONT, 11, "bold"), anchor="w", justify="left")
+        self.count_lbl.pack(fill="x")
+        auto_wrap(self.count_lbl)
+        self.estimate_lbl = tk.Label(c4.body, text="", bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w", justify="left")
+        self.estimate_lbl.pack(fill="x")
+        auto_wrap(self.estimate_lbl)
+        buttons = tk.Frame(c4.body, bg=C_CARD)
+        buttons.pack(fill="x", pady=(8, 0))
+        self.stop_btn = ttk.Button(buttons, text=t("stop"), style="Stop.TButton", command=self.stop, state="disabled")
+        self.stop_btn.pack(side="right", padx=(8, 0))  # always visible, greyed out unless a search is running
+        self.start_btn = ttk.Button(buttons, text=t("start"), style="Start.TButton", command=self.start)
+        self.start_btn.pack(side="left", fill="x", expand=True)
+        ttk.Separator(c4.body).pack(fill="x", pady=(10, 6))
+        self.status_lbl = tk.Label(c4.body, text=t("ready"), bg=C_CARD, fg=C_TEXT, font=(FONT, 11, "bold"), anchor="w", justify="left")
         self.status_lbl.pack(fill="x")
+        auto_wrap(self.status_lbl)
         self.progress = ttk.Progressbar(c4.body, style="green.Horizontal.TProgressbar", mode="determinate", maximum=1, value=0)
-        self.progress.pack(fill="x", pady=(8, 4))
+        self.progress.pack(fill="x", pady=(6, 2))
         self.detail_lbl = tk.Label(c4.body, text="", bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w", justify="left")
         self.detail_lbl.pack(fill="x")
         auto_wrap(self.detail_lbl)
 
-        self.results_row = tk.Frame(c4.body, bg=C_CARD)
-        ttk.Button(self.results_row, text=L(("Revisar precios →", "Review prices →")),
-                   command=self.open_review).pack(side="left", padx=(0, 8))
+        # Results: a small card at the top of the right column, shown when a search finishes.
+        self.results_card = Card(right, t("card_results"), compact=True)
+        self.results_row = tk.Frame(self.results_card.body, bg=C_CARD)
+        self.results_row.pack(fill="x")
         self.btn_open_out = ttk.Button(self.results_row, text=t("open_results"),
                                        command=lambda: self.output_path and open_path(self.output_path))
         self.btn_open_perf = ttk.Button(self.results_row, text=t("open_perf"),
@@ -2071,80 +2191,57 @@ class App:
         for b in (self.btn_open_out, self.btn_open_perf, self.btn_open_dir):
             b.pack(side="left", padx=(0, 8))
 
-        self.log_head = tk.Frame(c4.body, bg=C_CARD)
-        self.log_head.pack(fill="x", pady=(10, 0))
-        self.log_visible = False
-        self.log_toggle = ttk.Button(self.log_head, text=t("show_log"), style="Link.TButton", command=self.toggle_log)
-        self.log_toggle.pack(side="left")
-        self.log_frame = tk.Frame(c4.body, bg=C_CARD)
-        self.log = tk.Text(self.log_frame, height=12, wrap="none", font=("Consolas" if FONT == "Segoe UI" else "Courier", 9),
+        self.log_head = tk.Frame(c4.body, bg=C_CARD)   # results buttons go just above this
+        self.log_head.pack(fill="x")
+
+        # Technical details: the whole right column, always shown.
+        c_log = Card(right, t("log_title_card"), compact=True)
+        c_log.grid(row=1, column=0, sticky="nsew")
+        self.log_visible = True
+        self.log_toggle = ttk.Button(c_log.body, text=t("hide_log"), style="Link.TButton", command=self.toggle_log)
+        self.log_frame = tk.Frame(c_log.body, bg=C_CARD)
+        self.log_frame.pack(fill="both", expand=True)
+        self.log = tk.Text(self.log_frame, height=8, wrap="none", font=("Consolas" if FONT == "Segoe UI" else "Courier", 9),
                            bg="#10160F", fg="#D6E4D6", insertbackground="white", relief="flat", padx=8, pady=6)
         ysb, setter = slim_scrollbar(self.log_frame, self.log.yview, "Dark.Vertical.TScrollbar")
         self.log.configure(yscrollcommand=setter)
         register_scroll(self.log, text_lines=True)
         self.log.pack(side="left", fill="both", expand=True)
         ysb.pack(side="right", fill="y")
+        self.log.tag_configure("placeholder", foreground="#7E8F80")
+        self._log_placeholder = not self._log_text
         if self._log_text:
             self.log.insert("end", self._log_text + "\n")
             self.log.see("end")
+        else:
+            self.log.insert("end", t("log_empty"), "placeholder")
         self.log.configure(state="disabled")
 
         self.products_var.trace_add("write", lambda *_: self._products_changed())
-        self.results_var.trace_add("write", lambda *_: self._results_changed())
         self.refresh_settings_badge()
-        self._compare_changed()
 
     # -- helpers ------------------------------------------------------------
     def _mode_changed(self):
-        mode = self.mode_var.get()
-        self.limit_spin.configure(state="normal" if mode == "test" else "disabled")
-        self.test_type_combo.configure(state="readonly" if mode == "test" else "disabled")
-        if mode == "all" and not self.filt_box.winfo_manager():
-            self.filt_box.pack(fill="x", padx=(24, 0), pady=(4, 0), after=self.all_radio)
-        elif mode != "all" and self.filt_box.winfo_manager():
-            self.filt_box.pack_forget()
-        in_problems = mode == "problems"
-        if in_problems and not self.prob_box.winfo_manager():
-            self.prob_box.pack(fill="x", padx=(24, 0), pady=(4, 0), after=self.problems_radio)
-        elif not in_problems and self.prob_box.winfo_manager():
-            self.prob_box.pack_forget()
-        self.results_entry.configure(state="normal" if in_problems else "disabled")
-        self.results_btn.configure(state="normal" if in_problems else "disabled")
-        has_problems = self._problems_state == "ok"
-        for k, cb in self.prob_checks.items():
-            available = has_problems and (k != "price_change" or bool((self._problems or {}).get("has_price_change")))
-            cb.configure(state="normal" if in_problems and available else "disabled")
-        self.prob_note.configure(fg=(C_WARN if self._problems_state in ("missing", "error") else C_MUTED)
-                                 if in_problems else "#A7B0A9")
-
-    def _compare_changed(self):
-        on = bool(self.compare_var.get())
-        self.session["compare"] = on
-        if on and not self.cmp_box.winfo_manager():
-            self.cmp_box.pack(fill="x", padx=(24, 0), after=self.compare_check)
-        elif not on and self.cmp_box.winfo_manager():
-            self.cmp_box.pack_forget()
-        self.current_entry.configure(state="normal" if on else "disabled")
-        self.current_btn.configure(state="normal" if on else "disabled")
-        self.current_note.configure(fg=C_MUTED if on else "#A7B0A9")
+        self.limit_spin.configure(state="normal" if self.scope_var.get() == "first" else "disabled")
 
     def toggle_log(self):
         if self.log_visible:
             self.log_frame.pack_forget()
             self.log_toggle.configure(text=t("show_log"))
         else:
-            self.log_frame.pack(fill="both", expand=True, pady=(4, 0))
+            self.log_frame.pack(fill="both", expand=True)
             self.log_toggle.configure(text=t("hide_log"))
             self.root.after(50, self.scroll_to_bottom)
         self.log_visible = not self.log_visible
 
     def scroll_to_bottom(self):
-        self.canvas.update_idletasks()
-        self.canvas.configure(scrollregion=self.canvas.bbox("all"))
-        self.canvas.yview_moveto(1.0)
+        self.log.see("end")   # the page itself no longer scrolls
 
     def append_log(self, text: str):
         self.log.configure(state="normal")
+        if getattr(self, "_log_placeholder", False):
+            self.log.delete("1.0", "end")
+            self._log_placeholder = False
         self.log.insert("end", text + "\n")
         if int(self.log.index("end-1c").split(".")[0]) > 5000:
             self.log.delete("1.0", "1000.0")
@@ -2174,12 +2271,21 @@ class App:
 
     def _show_results_row(self):
         self.btn_open_perf.configure(state="normal" if self.perf_path and self.perf_path.exists() else "disabled")
-        self.results_row.pack(fill="x", pady=(10, 0), before=self.log_head)
+        self.results_card.grid(row=0, column=0, sticky="ew", pady=(0, 8))
 
     def refresh_settings_badge(self):
+        if getattr(self, "stores_lbl", None) is not None:
+            chosen = self.settings.run.get("stores") or [sid for sid, _ in STORES]
+            names = ", ".join(name for sid, name in STORES if sid in chosen)
+            self.stores_lbl.configure(text=t("stores_line", names=names))
+            self.update_count()
         n = len(self.settings.changed_matcher()) + len(self.settings.changed_run())
         if n:
-            self.badge.configure(text=t("badge_custom", n=n), fg=C_WARN)
+            text = t("badge_custom", n=n)
+            stores = self.settings.run.get("stores") or []
+            if len(stores) < len(STORES):
+                text += " · " + t("badge_stores", n=len(stores), total=len(STORES))
+            self.badge.configure(text=text, fg=C_WARN)
         else:
             self.badge.configure(text=t("badge_default"), fg=C_MUTED)
 
@@ -2232,8 +2338,48 @@ class App:
     def pick_current(self):
         self._pick_excel(self.current_var, "pick_current_title")
 
-    def pick_results(self):
-        self._pick_excel(self.results_var, "pick_results_title")
+    # -- review tab -----------------------------------------------------------
+    def _build_review_tab(self):
+        """Fill the review tab: the loaded review, or a short explanation when nothing is loaded yet."""
+        for child in self.review_tab.winfo_children():
+            child.destroy()
+        self._review_window = None
+        bar = tk.Frame(self.review_tab, bg=C_BG)
+        bar.pack(fill="x", padx=18, pady=(10, 0))
+        self.review_file_lbl = tk.Label(bar, text="", bg=C_BG, fg=C_MUTED, font=(FONT, 9), anchor="w")
+        self.review_file_lbl.pack(side="left", fill="x", expand=True)
+        self.review_other_btn = ttk.Button(bar, text=t("review_other"), style="Small.TButton",
+                                           command=lambda: self.open_review(choose=True))
+        self.review_host = tk.Frame(self.review_tab, bg=C_BG)
+        self.review_host.pack(fill="both", expand=True)
+        self._show_review_placeholder()
+
+    def _relabel_review_tab(self):
+        """After a language change: translate the review tab in place, keeping the loaded review and its state."""
+        self.review_other_btn.configure(text=t("review_other"))
+        if self._review_window is not None:
+            path = (getattr(self, "_review_args", None) or ("",))[0]
+            self.review_file_lbl.configure(text=t("review_file", name=Path(path).name) if path else "")
+            self._review_window.set_language(LANG)
+        else:
+            loading = getattr(self, "_review_loading", False)
+            self._show_review_placeholder("review_loading" if loading else getattr(self, "_placeholder_key", "review_empty"))
+
+    def _show_review_placeholder(self, text_key="review_empty"):
+        for child in self.review_host.winfo_children():
+            child.destroy()
+        self._placeholder_key = text_key
+        self._review_window = None
+        self._review_args = None
+        self.review_file_lbl.configure(text="")
+        self.review_other_btn.pack_forget()
+        box = Card(self.review_host, t("review_empty_title") if text_key == "review_empty" else t("tab_review"))
+        box.pack(fill="x", padx=18, pady=(8, 0))
+        msg = tk.Label(box.body, text=t(text_key), bg=C_CARD, fg=C_TEXT, font=(FONT, 10), anchor="w", justify="left")
+        msg.pack(fill="x")
+        auto_wrap(msg)
+        if text_key == "review_empty":
+            ttk.Button(box.body, text=t("review_open"), command=lambda: self.open_review(choose=True)).pack(anchor="w", pady=(12, 0))
 
     def open_review(self, choose=False):
         if getattr(self, "_review_loading", False):
@@ -2242,10 +2388,6 @@ class App:
         if self.proc:
             messagebox.showinfo(t("app_title"), L(("Espere a que termine la búsqueda.", "Wait for the search to finish.")))
             return
-        existing = getattr(self, "_review_window", None)
-        if existing is not None and existing.winfo_exists():
-            existing.lift()
-            return
         path = self.output_path
         if choose or not path:
             path = filedialog.askopenfilename(parent=self.root, title=L(("Elegir resultados para revisar", "Choose results to review")),
@@ -2253,34 +2395,51 @@ class App:
             if not path:
                 return
         context = getattr(self, "_review_context", {}) if not choose else {}
-        template = context.get("template") or self.current_var.get().strip() or str(BASE_DIR / "current_prices.xlsx")
-        saved_review = Path(path).with_suffix(Path(path).suffix + ".review.json")
-        if choose and saved_review.is_file():
-            try:
-                template = json.loads(saved_review.read_text(encoding="utf-8")).get("template", template)
-            except (ValueError, OSError):
-                pass
-        if not Path(template).is_file():
+        # A results file opened from the review tab is reviewed and exported on its own: it carries each
+        # product's Salesforce Id and current price (or its saved review keeps a copy). Only results from an
+        # older version need the current-prices file, and then it is asked for.
+        template = None if choose else (context.get("template") or self.current_var.get().strip() or None)
+        if template and not Path(template).is_file():
+            template = None
+        if template is None and not results_are_self_contained(path):
             template = filedialog.askopenfilename(parent=self.root, title=t("pick_current_title"), filetypes=[("Current prices", "*.xlsx *.xlsm *.csv")])
             if not template:
                 return
-        settings = context.get("settings", dict(self.settings.matcher))
-        products = context.get("products", self.products_var.get().strip())
-        lang = LANG
+        self._load_review(str(path), template, context.get("settings", dict(self.settings.matcher)),
+                          context.get("products", self.products_var.get().strip()))
+
+    def _load_review(self, path, template, settings, products, select=True):
+        """Open a results file in the review tab (replacing whatever was there).
+        The workbook is read in the background, so the window stays usable while a big file loads."""
+        if select:
+            self.tabs.select(self.review_tab)
+        self._show_review_placeholder("review_loading")
         self._review_loading = True
+        previous_status = getattr(self, "_status_spec", ("ready", {}, C_TEXT))  # e.g. "✓ Done: 500 products"
         self.set_status("loading_review")
+        lang = LANG
 
         def finish(session, error):
             self._review_loading = False
             if error:
+                self._show_review_placeholder()
                 self.set_status("failed", C_ERROR)
                 messagebox.showerror(t("app_title"), error, parent=self.root)
                 return
-            from price_review_ui import ReviewWindow
+            from price_review_ui import ReviewPanel
             session.lang = LANG
             session.rescore()
-            self._review_window = ReviewWindow(self.root, path, template, session=session)
-            self.set_status("ready")
+            panel = ReviewPanel(self.review_host, path, template, session=session)
+            for child in self.review_host.winfo_children():
+                if child is not panel:
+                    child.destroy()
+            panel.pack(fill="both", expand=True)
+            self._review_window = panel
+            self._review_args = (path, template, settings, products)
+            self.review_file_lbl.configure(text=t("review_file", name=Path(path).name))
+            self.review_other_btn.pack(side="right")
+            key, kw, color = previous_status
+            self.set_status(key, color, **kw)   # put back what the status line said before loading
 
         def load():
             try:
@@ -2358,20 +2517,8 @@ class App:
         types = self._types()
         current = self.selected_type()
         self.type_combo.configure(values=[t("all_types")] + types)
-        self.test_type_combo.configure(values=[t("all_types")] + types)
         if state != "loading":  # while loading, keep the saved selection
             self.type_var.set(current if current in types else t("all_types"))
-        notes = {
-            "loading": (t("loading"), C_MUTED),
-            "no_file": (t("choose_file_first"), C_MUTED),
-            "missing_file": (t("file_not_found_short"), C_ERROR),
-            "ok": ("", C_MUTED),
-        }
-        if state == "error":
-            key = "missing_python_short" if ("ModuleNotFoundError" in self._opts_error or "No module named" in self._opts_error) else "types_failed"
-            notes["error"] = (t(key), C_WARN)
-        text, color = notes[state]
-        self.type_note.configure(text=text, fg=color)
         self.update_count()
 
     def clear_filters(self):
@@ -2379,100 +2526,21 @@ class App:
         self.contains_var.set("")
         self.update_count()
 
-    # -- last-run problems ---------------------------------------------------
-    def _results_changed(self):
-        self.session["results"] = self.results_var.get().strip()
-        if self._problems_after:
-            self.root.after_cancel(self._problems_after)
-        self._problems_after = self.root.after(300, self.load_problems)
-
-    def load_problems(self):
-        self._problems_after = None
-        text = self.results_var.get().strip()
-        if not text:
-            self._problems, self._problems_state = None, "none"
-            self._apply_problems()
-            return
-        path = Path(text)
-        if not path.is_file():
-            self._problems, self._problems_state = None, "missing"
-            self._apply_problems()
-            return
-        self._problems_state = "loading"
-        self._apply_problems()
-
-        def work():
-            try:
-                data = read_last_problems(path)
-                data["file"] = path.name
-                data["date"] = time.strftime("%d/%m/%Y %H:%M", time.localtime(path.stat().st_mtime))
-                self.call_ui(lambda: self._problems_loaded(data, None, text))
-            except Exception as exc:
-                err = str(exc)
-                self.call_ui(lambda: self._problems_loaded(None, err, text))
-
-        threading.Thread(target=work, daemon=True).start()
-
-    def _problems_loaded(self, data, error, path_text):
-        if not same_path(path_text, self.results_var.get()):
-            return  # a different file was chosen meanwhile
-        self._problems = data
-        self._problems_state = "error" if error else "ok"
-        if error:
-            self.append_log(f"[UI] Could not read previous results: {error}")
-        self._apply_problems()
-
-    def _apply_problems(self):
-        state, data = self._problems_state, self._problems
-        for k, cb in self.prob_checks.items():
-            if k == "price_change" and state == "ok" and data and not data.get("has_price_change"):
-                cb.configure(text=t("prob_price_change_na"))  # that run had no price comparison
-                continue
-            n = len(data.get(k, [])) if state == "ok" and data else 0
-            cb.configure(text=t("prob_" + k, n=n if state == "ok" else "…"))
-        if state == "ok":
-            self.prob_note.configure(text=t("prob_source", name=data["file"], date=data["date"]), fg=C_MUTED)
-        elif state == "none":
-            self.prob_note.configure(text=t("prob_none"))
-        elif state == "missing":
-            self.prob_note.configure(text=t("prob_missing"))
-        elif state == "error":
-            self.prob_note.configure(text=t("prob_failed"))
-        else:
-            self.prob_note.configure(text=t("loading"))
-        self._mode_changed()
-        self.update_count()
-
-    def problem_codes(self) -> set[str] | None:
-        """Codes to search in 'problems' mode, or None when not in that mode."""
-        if self.mode_var.get() != "problems":
-            return None
-        codes: set[str] = set()
-        if self._problems_state == "ok" and self._problems:
-            for k, var in self.prob_vars.items():
-                if var.get():
-                    codes.update(self._problems.get(k, []))
-        return codes
-
     # -- live product count ---------------------------------------------------
     def matching_count(self) -> int | None:
         """How many products the robot will search with the current choices (None if unknown)."""
         if self._opts_state != "ok":
             return None
-        filters_on = self.mode_var.get() == "all"
-        ptype = norm(self.selected_type()) if self.mode_var.get() in ("all", "test") else ""
-        contains = norm(self.contains_var.get()) if filters_on else ""
-        codes = self.problem_codes()
+        ptype = norm(self.selected_type())
+        contains = norm(self.contains_var.get())
         n = 0
         for code, name_n, _type, type_n in self._rows:
             if ptype and type_n != ptype:
                 continue
             if contains and contains not in name_n:
                 continue
-            if codes is not None and code not in codes:
-                continue
             n += 1
-        if self.mode_var.get() == "test":
+        if self.scope_var.get() == "first":
             try:
                 n = min(n, max(1, int(self.limit_var.get())))
             except ValueError:
@@ -2484,11 +2552,25 @@ class App:
             return
         self._mode_changed()
         n = self.matching_count()
-        if n is not None and self.mode_var.get() == "problems" and self._problems_state != "ok":
-            self.count_lbl.configure(text=t("count_need_results"), fg=C_MUTED)
-        elif n is None:
-            self.count_lbl.configure(text=t("count_waiting") if self._opts_state in ("no_file", "missing_file") else "",
-                                     fg=C_MUTED)
+        if getattr(self, "estimate_lbl", None) is not None:
+            run = self.settings.run
+            self.estimate_lbl.configure(text=t("estimate_line", t=fmt_duration(estimate_run_seconds(
+                n, run.get("workers", 1), len(run.get("stores") or STORES)))) if n else "")
+        if n is None:
+            state = self._opts_state
+            if state == "error":
+                err = self._opts_error or ""
+                key = "count_python" if ("ModuleNotFoundError" in err or "No module named" in err) else "count_failed"
+                text, color = "⚠  " + t(key), C_WARN
+            elif state == "missing_file":
+                text, color = "⚠  " + t("count_missing"), C_ERROR
+            elif state == "loading":
+                text, color = t("count_loading"), C_MUTED
+            elif state == "no_file":
+                text, color = t("count_waiting"), C_MUTED
+            else:
+                text, color = "", C_MUTED
+            self.count_lbl.configure(text=text, fg=color)
         elif n == 0:
             self.count_lbl.configure(text="⚠  " + t("will_search_none"), fg=C_WARN)
         else:
@@ -2516,34 +2598,27 @@ class App:
             env["BAP_ROBOT_FILTER"] = json.dumps(product_filter, ensure_ascii=False)
         return env
 
-    def product_filter(self) -> dict | None:
-        codes = self.problem_codes()
-        return None if codes is None else {"codes": sorted(codes)}
-
     def build_command(self) -> list[str] | None:
         products_text = self.products_var.get().strip()
         products = Path(products_text)
         if not products_text or not products.is_file():
             messagebox.showerror(t("app_title"), t("err_products"))
             return None
-        stores = [sid for sid, _ in STORES if self.store_vars[sid].get()]
+        chosen = self.settings.run.get("stores") or []
+        stores = [sid for sid, _ in STORES if sid in chosen]
         if not stores:
             messagebox.showerror(t("app_title"), t("err_stores"))
             return None
 
-        if self.compare_var.get() and not Path(self.current_var.get().strip() or "\0").is_file():
+        if not Path(self.current_var.get().strip() or "\0").is_file():
             messagebox.showerror(t("app_title"), t("err_current"))
             return None
-        if self.mode_var.get() == "problems" and self._problems_state != "ok":
-            messagebox.showerror(t("app_title"), t("err_results"))
+        problem = input_files_problem(products, self.current_var.get().strip())
+        if problem:
+            messagebox.showerror(t("app_title"), problem)
             return None
-        codes = self.problem_codes()
-        if codes is not None and not codes:
-            messagebox.showerror(t("app_title"), t("err_no_problems"))
-            return None
-
         cmd = worker_command() + ["--products", str(products), "--stores", ",".join(stores)]
-        if self.mode_var.get() == "test":
+        if self.scope_var.get() == "first":
             try:
                 limit = int(self.limit_var.get())
                 if limit < 1:
@@ -2552,14 +2627,12 @@ class App:
                 messagebox.showerror(t("app_title"), t("err_limit"))
                 return None
             cmd += ["--limit", str(limit)]
-        if self.mode_var.get() == "all":   # filters are only shown and used with this option
-            contains = self.contains_var.get().strip()
-            if contains:
-                cmd += ["--contains", contains]
-        if self.mode_var.get() in ("all", "test"):
-            ptype = self.selected_type()
-            if ptype:
-                cmd += ["--type", ptype]
+        contains = self.contains_var.get().strip()
+        if contains:
+            cmd += ["--contains", contains]
+        ptype = self.selected_type()
+        if ptype:
+            cmd += ["--type", ptype]
 
         r = self.settings.run
         if not output_folder(r).is_dir():
@@ -2583,21 +2656,18 @@ class App:
         if getattr(self, "_review_loading", False):
             self.set_status("loading_review")
             return
-        review = getattr(self, "_review_window", None)
-        if review is not None and review.winfo_exists():
-            review.lift()
-            messagebox.showinfo(t("app_title"), L(("Cierre la revisión antes de iniciar otra búsqueda. Sus decisiones ya están guardadas.",
-                                                     "Close the review before starting another search. Your decisions are already saved.")), parent=review)
-            return
         cmd = self.build_command()
         if not cmd:
             return
         n = self.matching_count()
-        if n is not None and n > 300 and self.mode_var.get() != "test":
-            est = estimate_run_seconds(n, self.settings.run["workers"])
+        if n is not None and n > 300:
+            est = estimate_run_seconds(n, self.settings.run["workers"], len(self.settings.run.get("stores") or STORES))
             if not messagebox.askyesno(t("app_title"), t("confirm_many", n=f"{n:,}", t=fmt_duration(est))):
                 return
 
+        # The new search rewrites the results file, so close the review now (its decisions are already saved).
+        if self._review_window is not None:
+            self._show_review_placeholder()
         overrides = dict(self.settings.matcher)
         self._review_context = {"settings": dict(overrides), "products": self.products_var.get().strip(),
                                 "template": self.current_var.get().strip() or str(BASE_DIR / "current_prices.xlsx")}
@@ -2608,7 +2678,7 @@ class App:
         self.progress_was_done = False
         self.log_tail = []
         self.stopped_by_user = False
-        self.results_row.pack_forget()
+        self.results_card.grid_remove()
         self.progress.configure(mode="indeterminate", value=0)
         self.progress.start(12)
         self.set_status("reading")
@@ -2619,8 +2689,8 @@ class App:
             self.proc = subprocess.Popen(
                 cmd, cwd=str(BASE_DIR), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                 text=True, encoding="utf-8", errors="replace", bufsize=1,
-                creationflags=no_window_flags(), env=self._child_env(overrides, self.product_filter(), perf_file=str(self._planned_perf), current_prices=
-                                                                        self.current_var.get().strip() if self.compare_var.get() else ""),
+                creationflags=no_window_flags(), env=self._child_env(overrides, perf_file=str(self._planned_perf),
+                                                                        current_prices=self.current_var.get().strip()),
             )
         except Exception as exc:
             self.proc = None
@@ -2630,14 +2700,12 @@ class App:
             return
 
         self.started_at = time.time()
+        self._rate_start = None   # (time, products done) at the first finished product
         self.start_btn.configure(state="disabled")
         self.stop_btn.configure(state="normal")
         self.root.title(t("app_title"))
         self.remember_recent("products", self.products_var.get())
-        if self.compare_var.get():
-            self.remember_recent("current", self.current_var.get())
-        if self.mode_var.get() == "problems":
-            self.remember_recent("results", self.results_var.get())
+        self.remember_recent("current", self.current_var.get())
         self.settings.save()
         self.root.after(150, self.scroll_to_bottom)  # bring the progress into view
         proc = self.proc
@@ -2735,6 +2803,8 @@ class App:
         m = self.RE_STEP.match(line)
         if m:
             self.done, self.total = int(m.group(1)), int(m.group(2))
+            if getattr(self, "_rate_start", None) is None:
+                self._rate_start = (time.time(), self.done)
             self.progress.configure(value=self.done, maximum=max(1, self.total))
             self.set_status("searching_step", i=self.done, n=self.total)
             self._last_name = m.group(3)
@@ -2752,14 +2822,28 @@ class App:
         if m:
             self.perf_path = Path(m.group(1).strip())
 
+    def remaining_seconds(self, elapsed):
+        """Time left: from the actual pace once products are finishing (ignoring the start-up time spent
+        reading files), before that from the pre-run estimate."""
+        if not self.total or self.done >= self.total:
+            return None
+        start = getattr(self, "_rate_start", None)
+        if start and self.done - start[1] >= 3:
+            pace = (time.time() - start[0]) / (self.done - start[1])
+            return pace * (self.total - self.done)
+        run = self.settings.run
+        estimate = estimate_run_seconds(self.total, run.get("workers", 1), len(run.get("stores") or STORES))
+        return max(estimate - elapsed, 0) if self.done == 0 else max(estimate * (self.total - self.done) / self.total, 0)
+
     def _tick(self):
         """Update elapsed / remaining time once per second while running."""
         if not self.proc:
             return
         elapsed = time.time() - self.started_at
         parts = [("time", {"t": fmt_duration(elapsed)})]
-        if self.total and 0 < self.done < self.total:
-            parts.append(("remaining", {"t": fmt_duration(elapsed / self.done * (self.total - self.done))}))
+        left = self.remaining_seconds(elapsed)
+        if left is not None:
+            parts.append(("remaining", {"t": fmt_duration(left)}))
         if self._last_name and self.done < self.total:
             parts.append(("last_item", {"name": self._last_name}))
         self.set_detail(*parts)
@@ -2792,7 +2876,6 @@ class App:
             self.set_detail(("results_file", {"name": self.output_path.name}), ("summarizing", {}))
             self._show_results_row()
             threading.Thread(target=self._summarize, args=(self.output_path,), daemon=True).start()
-            self.results_var.set(str(self.output_path))  # ready for "only the problems" next time
             self.root.after_idle(self.open_review)
             when = self.settings.run.get("open_when_done", "none")
             if when in ("results", "both"):

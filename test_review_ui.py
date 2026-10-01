@@ -9,13 +9,102 @@ from price_review_ui import ReviewWindow
 import price_robot_ui as app_ui
 
 
+def make_products_sheet(path, drop=()):
+    """A products workbook with every required column (minus `drop`)."""
+    from openpyxl import Workbook
+    from current_prices import PRODUCT_REQUIRED_COLUMNS
+    headers = [c for c in ("ERP Id (QBO)",) + PRODUCT_REQUIRED_COLUMNS if c not in drop]
+    wb = Workbook()
+    ws = wb.active
+    ws.append(headers)
+    ws.append(["x"] * len(headers))
+    wb.save(path)
+    wb.close()
+    return path
+
+
+class InputColumnTests(unittest.TestCase):
+    def test_search_needs_all_required_columns(self):
+        import tempfile
+        from pathlib import Path
+        from current_prices import product_columns_missing, current_prices_columns_missing
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp = Path(tmp)
+            good = make_products_sheet(tmp / "good.xlsx")
+            bad = make_products_sheet(tmp / "bad.xlsx", drop=("Unidad de Peso en KG", "Categoria RepTrim"))
+            self.assertEqual(product_columns_missing(good), [])
+            self.assertEqual(product_columns_missing(bad), ["Unidad de Peso en KG", "Categoria RepTrim"])
+            salesforce = tmp / "sf.csv"
+            salesforce.write_text("ProductCode,Id,UnitPrice\n001,01uA,10\n", encoding="utf-8")
+            legacy = tmp / "legacy.csv"
+            legacy.write_text("Código de producto,Nombre del producto,Precio de lista\n001,Rice,10\n", encoding="utf-8")
+            no_price = tmp / "no_price.csv"
+            no_price.write_text("ProductCode,Id\n001,01uA\n", encoding="utf-8")
+            self.assertEqual(current_prices_columns_missing(salesforce), [])
+            self.assertEqual(current_prices_columns_missing(legacy), ["Id"])      # old BAP file: no Salesforce Id
+            self.assertEqual(current_prices_columns_missing(no_price), ["UnitPrice / Precio de lista"])
+            self.assertIsNone(app_ui.input_files_problem(str(good), str(salesforce)))
+            self.assertIn("Id", app_ui.input_files_problem(str(good), str(legacy)))
+            blank_ids = tmp / "blank_ids.csv"
+            blank_ids.write_text("ProductCode,Id,UnitPrice\n001,,10\n", encoding="utf-8")
+            self.assertIn("Id", app_ui.input_files_problem(str(good), str(blank_ids)))
+            self.assertIn("Categoria RepTrim", app_ui.input_files_problem(str(bad), str(salesforce)))
+            self.assertIn("UnitPrice", app_ui.input_files_problem(str(good), str(no_price)))
+            dupes = tmp / "dupes.csv"
+            dupes.write_text("ProductCode,Id,UnitPrice\n001,a,1\n001,b,2\n", encoding="utf-8")
+            self.assertIsNotNone(app_ui.input_files_problem(str(good), str(dupes)))
+
+    def test_robot_itself_refuses_products_sheet_without_required_columns(self):
+        import sys, tempfile
+        from pathlib import Path
+        import price_robot
+        with tempfile.TemporaryDirectory() as tmp:
+            bad = make_products_sheet(Path(tmp) / "bad.xlsx", drop=("Familia de productos",))
+            with patch.object(sys, "argv", ["price_robot.py", "--products", str(bad), "--limit", "1"]):
+                with self.assertRaisesRegex(ValueError, "Familia de productos"):
+                    price_robot.main()
+
+
 class RuntimeEstimateTests(unittest.TestCase):
     def test_observed_full_catalog_and_worker_scaling(self):
+        # both measured runs are reproduced
         self.assertEqual(app_ui.estimate_run_seconds(5440, 100), 360)
+        self.assertEqual(app_ui.estimate_run_seconds(80, 6), 47)
         self.assertEqual(app_ui.estimate_run_seconds(2720, 100), 180)
-        self.assertEqual(app_ui.estimate_run_seconds(5440, 50), 720)
-        self.assertGreater(app_ui.estimate_run_seconds(5440, 8), app_ui.estimate_run_seconds(5440, 100))
+        # more workers help, but with diminishing returns (not proportional)
+        fifty = app_ui.estimate_run_seconds(5440, 50)
+        self.assertTrue(360 < fifty < 720)
+        self.assertGreater(app_ui.estimate_run_seconds(5440, 8), fifty)
         self.assertEqual(app_ui.estimate_run_seconds(0, 100), 0)
+        # fewer supermarkets = fewer searches
+        self.assertEqual(app_ui.estimate_run_seconds(5440, 100, stores=2), 180)
+
+    def test_default_workers_is_100_and_old_default_is_migrated(self):
+        self.assertEqual(app_ui.RUN_DEFAULTS["workers"], 100)
+        import json, tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "ui_settings.json"
+            with patch.object(app_ui, "SETTINGS_FILE", path):
+                for saved, version, expected in ((6, None, 100), (6, 2, 6), (40, None, 40)):
+                    data = {"run": {"workers": saved}}
+                    if version:
+                        data["workers_default_version"] = version
+                    path.write_text(json.dumps(data), encoding="utf-8")
+                    settings = app_ui.Settings()
+                    settings.load()
+                    self.assertEqual(settings.run["workers"], expected)
+                settings.save()
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8"))["workers_default_version"], 2)
+
+    def test_live_countdown_ignores_startup_time(self):
+        import time
+        app = SimpleNamespace(total=1000, done=0, settings=SimpleNamespace(run={"workers": 100, "stores": ["a", "b", "c", "d"]}))
+        before = app_ui.App.remaining_seconds(app, 0)
+        self.assertEqual(before, app_ui.estimate_run_seconds(1000, 100))
+        # 30 s spent starting up, then 100 products in 10 s → 900 left at 0.1 s each ≈ 90 s
+        app.done, app._rate_start = 100, (time.time() - 10, 0)
+        self.assertAlmostEqual(app_ui.App.remaining_seconds(app, 40), 90, delta=2)
 
     def test_large_run_confirmation_uses_benchmark(self):
         app = SimpleNamespace(proc=None, build_command=lambda: ["python", "price_robot.py"],
@@ -36,10 +125,14 @@ class ReviewLoadingTests(unittest.TestCase):
                               current_var=SimpleNamespace(get=lambda: str(fixture.template)),
                               products_var=SimpleNamespace(get=lambda: ""),
                               settings=SimpleNamespace(matcher={}), root=Mock(),
-                              set_status=Mock(), call_ui=callbacks.append)
+                              set_status=Mock(), call_ui=callbacks.append,
+                              # the review now opens in the main window's "Review prices" tab
+                              tabs=Mock(), review_tab=Mock(), review_host=Mock(winfo_children=lambda: []),
+                              review_file_lbl=Mock(), review_other_btn=Mock(), _show_review_placeholder=Mock())
+        app._load_review = lambda *a, **k: app_ui.App._load_review(app, *a, **k)
         with patch.object(app_ui.threading, "Thread") as thread, \
              patch("price_review.ReviewSession") as session, \
-             patch("price_review_ui.ReviewWindow") as window:
+             patch("price_review_ui.ReviewPanel") as window:
             app_ui.App.open_review(app)
             self.assertTrue(app._review_loading)
             session.assert_not_called()
@@ -53,6 +146,8 @@ class ReviewLoadingTests(unittest.TestCase):
             callbacks.pop()()
             self.assertFalse(app._review_loading)
             self.assertIs(window.call_args.kwargs["session"], session.return_value)
+            self.assertIs(app._review_window, window.return_value)
+            app.tabs.select.assert_called_with(app.review_tab)
 
 
 class ReviewUITests(unittest.TestCase):
@@ -75,8 +170,6 @@ class ReviewUITests(unittest.TestCase):
             window.show_details()
             window.price.set("4.75")
             window.note.set("Draft note")
-            window.full_evidence.set(True)
-            window.include_unchanged.set(True)
             window.attributes("-alpha", 0.0)
             window.deiconify()
             root.update()
@@ -96,9 +189,74 @@ class ReviewUITests(unittest.TestCase):
                 self.assertEqual(window.search.get(), "Bath")
                 self.assertEqual(window.price.get(), "4.75")
                 self.assertEqual(window.note.get(), "Draft note")
-                self.assertTrue(window.full_evidence.get())
-                self.assertTrue(window.include_unchanged.get())
                 self.assertEqual(session.items["001"]["decision"], "accepted")
+            window.destroy()
+        finally:
+            root.destroy()
+            fixture.tearDown()
+
+    def test_decided_products_stay_listed_until_filter_refresh(self):
+        fixture = test_price_review.SessionTests()
+        fixture.setUp()
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            window = ReviewWindow(root, fixture.results, fixture.template)
+            window.withdraw()
+            window.sort_by("code")
+            window.filter.set(window.filter_values[1])   # pending
+            window.refresh()
+            self.assertEqual(window.tree.get_children(), ("001", "002", "003"))
+            window.tree.selection_set("001")
+            window.on_select()
+            window.decide("accepted")
+            self.assertEqual(window.tree.get_children(), ("001", "002", "003"))
+            self.assertEqual(window.tree.selection(), ("002",))
+            window.decide("rejected")
+            self.assertEqual(window.tree.get_children(), ("001", "002", "003"))
+            self.assertEqual(window.tree.selection(), ("003",))
+            window.filter.set(window.filter_values[1])
+            window.refresh()   # choosing the filter again (or "Refresh list") applies it
+            self.assertEqual(window.tree.get_children(), ("003",))
+            window.destroy()
+        finally:
+            root.destroy()
+            fixture.tearDown()
+
+    def test_clicking_another_product_saves_typed_price(self):
+        fixture = test_price_review.SessionTests()
+        fixture.setUp()
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            window = ReviewWindow(root, fixture.results, fixture.template)
+            window.withdraw()
+            window.sort_by("code")
+            self.assertEqual(window.tree["columns"], ("score", "code", "name", "current", "new", "percent", "status"))
+            window.tree.selection_set("001")
+            window.on_select()
+            window.price.set("7.25")
+            window.tree.selection_set("002")
+            window.on_select()
+            item = window.session.items["001"]
+            self.assertEqual((item["decision"], item["price"]), ("manual", 7.25))
+            self.assertEqual(window.tree.set("001", "new"), "$7.25")
+            self.assertEqual(window.tree.selection(), ("002",))
+            # untouched or unusable prices are not saved when moving on
+            before = dict(window.session.items["002"])
+            window.tree.selection_set("003")
+            window.on_select()
+            self.assertEqual(window.session.items["002"]["decision"], before["decision"])
+            window.price.set("abc")
+            window.tree.selection_set("001")
+            window.on_select()
+            self.assertEqual(window.session.items["003"]["decision"], "pending")
+            # redrawing the list while staying on a product keeps the draft unsaved
+            window.price.set("9.99")
+            window.refresh()
+            window.on_select()
+            self.assertEqual(window.session.items["001"]["price"], 7.25)
+            self.assertEqual(window.price.get(), "9.99")
             window.destroy()
         finally:
             root.destroy()
@@ -153,6 +311,8 @@ class ReviewUITests(unittest.TestCase):
             window.price.set("2")
             window.manual()
             self.assertEqual(window.tree.selection(), ())
+            self.assertEqual(window.tree.get_children(), ("003",))   # stays until the list is refreshed
+            window.refresh()
             self.assertEqual(window.tree.get_children(), ())
             window.session.decide(["003"], "pending")
             window.session.items["003"]["row"][test_price_review.PRICE] = 2.345
@@ -186,20 +346,15 @@ class ReviewUITests(unittest.TestCase):
                 self.assertLessEqual(child.winfo_x() + child.winfo_width(), window.category_box.winfo_width())
             self.assertLessEqual(window.categories_button.winfo_rootx() + window.categories_button.winfo_width(), window.winfo_rootx() + window.winfo_width())
             window.toggle_categories()
-            self.assertGreaterEqual(window.details.winfo_height(), window.body_font.metrics("linespace"))
-            window.details.configure(state="normal")
-            window.details.insert("end", "\n".join(f"Evidence {n}" for n in range(80)))
-            window.details.configure(state="disabled")
-            root.update()
-            before = window.details.yview()[0]
-            window.details.event_generate("<MouseWheel>", delta=-120)
-            root.update()
-            self.assertGreater(window.details.yview()[0], before)
+            # the product list gets the spare height; the price boxes stay fully visible below it
+            self.assertGreater(window.tree.winfo_height(), window.price_entry.winfo_height() * 3)
+            self.assertLessEqual(window.price_entry.winfo_rooty() + window.price_entry.winfo_height(),
+                                 window.winfo_rooty() + window.winfo_height())
             window.tree.xview_moveto(1)
             root.update()
             window.paint_percent_cells()
             visible = [label for label in window._percent_labels if label.winfo_manager()]
-            self.assertTrue(visible, (window.geometry(), window.unit, window.panes.winfo_geometry(), window.panes.sash_coord(0), [(w.winfo_class(), w.winfo_geometry(), w.winfo_reqheight()) for w in window.tree.master.winfo_children()]))
+            self.assertTrue(visible, (window.geometry(), window.unit, [(w.winfo_class(), w.winfo_geometry(), w.winfo_reqheight()) for w in window.tree.master.winfo_children()]))
             self.assertTrue(all(str(label.cget("font")) == str(window.heading_font) for label in visible))
             first = window.tree.bbox("001", "percent")
             last = window.tree.bbox("003", "percent")
@@ -236,7 +391,6 @@ class ReviewUITests(unittest.TestCase):
                 for column in window.tree["columns"]:
                     heading = window.tree.heading(column, "text")
                     self.assertGreaterEqual(int(window.tree.column(column, "minwidth")), window.heading_font.measure(heading))
-                self.assertEqual(len(window.panes.panes()), 2)
                 window.destroy()
         finally:
             for job in root.tk.call("after", "info"):
@@ -257,7 +411,7 @@ class ReviewUITests(unittest.TestCase):
                 self.assertEqual(len(window.tree.get_children()), 3)
                 window.tree.selection_set("003")
                 window.show_details()
-                self.assertIn("Bath mat", window.details.get("1.0", "end"))
+                self.assertIn("Bath mat", window.selected_label.cget("text"))
                 window.price.set("4.50")
                 window.note.set("Confirmed")
                 window.manual()
@@ -278,7 +432,7 @@ class ReviewUITests(unittest.TestCase):
         root = tk.Tk()
         root.withdraw()
         try:
-            with patch.object(app_ui.App, "load_options"), patch.object(app_ui.App, "load_problems"), \
+            with patch.object(app_ui.App, "load_options"), \
                  patch.object(app_ui, "warm_products_cache"), patch.object(app_ui.Settings, "load"), \
                  patch.object(app_ui.Settings, "save"):
                 app_ui.load_code_defaults()
@@ -286,12 +440,14 @@ class ReviewUITests(unittest.TestCase):
                 root.update_idletasks()
                 self.assertEqual(app.settings.matcher["PRICE_CHANGE_REVIEW_THRESHOLD"], .20)
                 self.assertTrue(callable(app.open_review))
-                app.products_var.set(str(fixture.template))
+                products = make_products_sheet(fixture.root / "products.xlsx")
+                app.products_var.set(str(products))
+                app.current_var.set(str(fixture.template))   # current prices are now required
                 app.settings.run["output_dir"] = str(fixture.root)
-                app.mode_var.set("test")
+                app.scope_var.set("first")
                 app.limit_var.set("2")
                 app.type_var.set("Tipo A seco")
-                app.contains_var.set("ignored in quick test")
+                app.contains_var.set("rice")   # filters and the amount now combine
                 app._opts_state = "ok"
                 app._rows = [(str(n), "rice", kind, app_ui.norm(kind)) for n, kind in enumerate(
                     ("Tipo B seco", "Tipo A seco", "Tipo B seco", "Tipo A seco", "Tipo A seco"))]
@@ -299,7 +455,10 @@ class ReviewUITests(unittest.TestCase):
                 cmd = app.build_command()
                 self.assertEqual(cmd[cmd.index("--type") + 1], "Tipo A seco")
                 self.assertEqual(cmd[cmd.index("--limit") + 1], "2")
-                self.assertNotIn("--contains", cmd)
+                self.assertEqual(cmd[cmd.index("--contains") + 1], "rice")
+                app.scope_var.set("all")
+                self.assertEqual(app.matching_count(), 3)
+                self.assertNotIn("--limit", app.build_command())
         finally:
             for job in root.tk.call("after", "info"):
                 root.after_cancel(job)

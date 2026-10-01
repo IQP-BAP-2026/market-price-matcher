@@ -221,6 +221,98 @@ class SessionTests(unittest.TestCase):
             session.export(self.root / "export.csv")
         self.assertFalse((self.root / "export.csv").exists())
 
+    def test_export_and_reopen_work_after_current_prices_file_is_gone(self):
+        session = self.session()
+        session.decide(["001"], "accepted")
+        moved = self.root / "moved.xlsx"
+        self.template.rename(moved)
+        self.assertGreater(session.export(self.root / "export.csv"), 0)
+        reopened = ReviewSession(self.results, self.template)
+        self.assertEqual(reopened.items["001"]["decision"], "accepted")
+        self.assertTrue(reopened.base["001"]["Id"])
+        self.assertGreater(reopened.export(self.root / "export2.csv"), 0)
+        reopened.path.unlink()   # without a saved review there is nothing to fall back on
+        with self.assertRaisesRegex(ValueError, "Salesforce Ids"):
+            ReviewSession(self.results, self.template)
+        moved.rename(self.template)
+
+    def test_export_refuses_when_results_file_changes(self):
+        session = self.session()
+        session.decide(["001"], "accepted")
+        with self.results.open("ab") as stream:
+            stream.write(b" ")
+        with self.assertRaisesRegex(ValueError, "results file changed"):
+            session.export(self.root / "export.csv")
+
+    def test_redo_after_undo_and_new_change_clears_redo(self):
+        session = self.session()
+        session.decide(["001"], "accepted")
+        session.decide(["002"], "rejected")
+        session.undo()
+        session.undo()
+        self.assertEqual([session.items[k]["decision"] for k in ("001", "002")], ["pending", "pending"])
+        session.redo()
+        self.assertEqual(session.items["001"]["decision"], "accepted")
+        session.redo()
+        self.assertEqual(session.items["002"]["decision"], "rejected")
+        session.redo()   # nothing left: no change
+        session.undo()
+        self.assertEqual(session.items["002"]["decision"], "pending")
+        session.decide(["003"], "rejected")
+        self.assertFalse(session.redo_stack)
+        reopened = self.session()
+        self.assertEqual(reopened.items["001"]["decision"], "accepted")
+
+    def test_accept_without_proposal_keeps_current_bap_price(self):
+        self.rows.append(evidence(**{CODE: "004", NAME: "Milk", PRICE: None}))
+        self.write_results()
+        session = self.session()
+        session.decide(["004"], "accepted")
+        self.assertEqual((session.items["004"]["decision"], session.items["004"]["price"]), ("accepted", 4))
+        session.decide(["001", "004"], "accepted")   # also in a group
+        self.assertEqual(session.items["004"]["price"], 4)
+        with self.assertRaisesRegex(ValueError, "no proposed or current price"):
+            session.decide(["003"], "accepted")      # neither a proposal nor a current price
+        session.export(self.root / "export.csv")
+        with (self.root / "export.csv").open(encoding="utf-8") as stream:
+            rows = list(csv.reader(stream))
+        self.assertIn(["01u1K00000aA8004AK", "4.00"], rows)
+
+    def test_results_with_salesforce_ids_review_and_export_without_current_prices(self):
+        currents = {"001": 10, "002": 5, "003": None}
+        for row in self.rows:
+            row["Current BAP Price"] = currents[row[CODE]]
+            row["Salesforce Id"] = "01u1K00000aA8" + row[CODE] + "AK"
+        self.write_results()
+        session = ReviewSession(self.results)              # no current-prices file at all
+        self.assertEqual(session.items["001"]["current"], 10)
+        session.decide(["001"], "accepted")
+        session.decide(["002"], "manual", "5.50")
+        self.assertEqual(session.export(self.root / "export.csv"), 2)
+        with (self.root / "export.csv").open(encoding="utf-8") as stream:
+            rows = list(csv.reader(stream))
+        self.assertEqual(rows[0], ["Id", "UnitPrice"])
+        self.assertIn(["01u1K00000aA8002AK", "5.50"], rows)
+        # opening the same results later with a current-prices file keeps the decisions
+        reopened = ReviewSession(self.results, self.template)
+        self.assertIsNone(reopened.archived_review)
+        self.assertEqual(reopened.items["002"]["decision"], "manual")
+
+    def test_launcher_writes_salesforce_id_into_results(self):
+        from openpyxl import Workbook
+        from robot_launcher import _add_columns_to_workbook
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Summary"
+        ws.append(["Spreadsheet Row", "Código de producto"])
+        ws.append([2, "001"])
+        ws.append([3, "002"])
+        _add_columns_to_workbook(wb, {"2": (10, 0.1, "", "01uID001")}, 0.2)
+        headers = [c.value for c in ws[1]]
+        self.assertIn("Salesforce Id", headers)
+        col = headers.index("Salesforce Id") + 1
+        self.assertEqual((ws.cell(2, col).value, ws.cell(3, col).value), ("01uID001", None))
+
     def test_legacy_comparison_still_works(self):
         path = self.root / "legacy.csv"
         path.write_text("Código de producto,Nombre del producto,Precio de lista\n001,Rice,5\n", encoding="utf-8")

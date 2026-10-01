@@ -209,7 +209,7 @@ def _output_path() -> Path:
 
 def _add_columns_to_results(path: Path, comparison: dict, threshold: float) -> None:
     """Add Current BAP Price / % Difference / Large Price Change to the main results file."""
-    new_headers = ["Current BAP Price", "% Difference vs Current", f"Price Change > {threshold:.0%}"]
+    new_headers = ["Current BAP Price", "% Difference vs Current", f"Price Change > {threshold:.0%}", "Salesforce Id"]
     if path.suffix.lower() == ".csv":
         with path.open(encoding="utf-8-sig", newline="") as f:
             rows = list(csv.reader(f))
@@ -218,8 +218,8 @@ def _add_columns_to_results(path: Path, comparison: dict, threshold: float) -> N
         i_row = rows[0].index("Spreadsheet Row")
         rows[0] += new_headers
         for r in rows[1:]:
-            cur, diff, big = comparison.get(str(r[i_row]).strip(), (None, None, ""))
-            r += ["" if cur is None else f"{cur:.2f}", "" if diff is None else f"{diff:.1%}", big]
+            cur, diff, big, sf_id = comparison.get(str(r[i_row]).strip(), (None, None, "", ""))
+            r += ["" if cur is None else f"{cur:.2f}", "" if diff is None else f"{diff:.1%}", big, sf_id]
         with path.open("w", encoding="utf-8-sig", newline="") as f:
             csv.writer(f).writerows(rows)
         return
@@ -231,9 +231,10 @@ def _add_columns_to_results(path: Path, comparison: dict, threshold: float) -> N
 
 
 def _add_columns_to_workbook(wb, comparison: dict, threshold: float) -> None:
-    """Add the three comparison columns to the Summary sheet of an open workbook."""
+    """Add the comparison columns (and each product's Salesforce Id, so the results file can be reviewed and
+    exported on its own) to the Summary sheet of an open workbook."""
     from openpyxl.styles import Font, PatternFill
-    new_headers = ["Current BAP Price", "% Difference vs Current", f"Price Change > {threshold:.0%}"]
+    new_headers = ["Current BAP Price", "% Difference vs Current", f"Price Change > {threshold:.0%}", "Salesforce Id"]
     ws = wb["Summary"] if "Summary" in wb.sheetnames else wb.active
     headers = [c.value for c in ws[1]]
     i_row = headers.index("Spreadsheet Row") + 1
@@ -246,8 +247,9 @@ def _add_columns_to_workbook(wb, comparison: dict, threshold: float) -> None:
         ws.column_dimensions[c.column_letter].width = 18
     flag_fill = PatternFill("solid", fgColor="FDE2C4")
     for r in range(2, ws.max_row + 1):
-        cur, diff, big = comparison.get(str(ws.cell(r, i_row).value).strip(), (None, None, ""))
+        cur, diff, big, sf_id = comparison.get(str(ws.cell(r, i_row).value).strip(), (None, None, "", ""))
         ws.cell(r, first, cur).number_format = "$0.00"
+        ws.cell(r, first + 3, sf_id or None)
         ws.cell(r, first + 1, diff).number_format = "+0.0%;-0.0%;0.0%"
         c = ws.cell(r, first + 2, big)
         if big == "YES":
@@ -276,13 +278,27 @@ def _mark_performance_workbook(wb, comparison: dict, threshold: float) -> None:
         quality = str(ws.cell(r, i_flag).value or "")
         if quality != "OK":
             reasons.append(f"Quality: {quality}")
-        _cur, diff, big = comparison.get(str(ws.cell(r, i_row).value).strip(), (None, None, ""))
+        _cur, diff, big, _id = comparison.get(str(ws.cell(r, i_row).value).strip(), (None, None, "", ""))
         if big == "YES":
             reasons.append(f"Price change {diff:+.0%} vs current (limit ±{threshold:.0%})")
             cell = ws.cell(r, i_review, "YES")
             cell.fill = flag_fill
             cell.font = Font(bold=True, color="9A3412")
         ws.cell(r, reason_col, " | ".join(reasons))
+
+
+def check_current_prices_file() -> None:
+    """Stop before searching when the chosen current-prices file lacks required columns or can't be read."""
+    chosen = os.environ.get("BAP_ROBOT_CURRENT_PRICES", "").strip()
+    if not chosen:
+        return
+    from current_prices import current_prices_columns_missing, read_current_rows
+    missing = current_prices_columns_missing(chosen)
+    if missing:
+        raise SystemExit(f"[ERROR] The current-prices file is missing required column(s): {', '.join(missing)}")
+    rows = read_current_rows(chosen)   # raises a readable error for duplicate codes, bad prices, …
+    if rows and not any(row.get("Id") for row in rows):
+        raise SystemExit("[ERROR] The current-prices file has an Id column but no Salesforce Ids in it.")
 
 
 def apply_current_prices_choice() -> None:
@@ -298,20 +314,24 @@ def apply_current_prices_choice() -> None:
     original_compare = pr.compare_current_prices
     original_analysis = pr.create_performance_analysis
     threshold = LAUNCHER_SETTINGS["PRICE_CHANGE_REVIEW_THRESHOLD"]
-    comparison: dict = {}   # "Spreadsheet Row" -> (current price, % difference, "YES"/"")
+    comparison: dict = {}   # "Spreadsheet Row" -> (current price, % difference, "YES"/"", Salesforce Id)
     state = {"added": False}
 
     def build_comparison(summary_headers, summary_rows) -> None:
         if comparison:
             return
-        prices = _read_current_prices(Path(target))
+        from current_prices import read_current_rows
+        current_rows = read_current_rows(Path(target))
+        prices = {r["Código de producto"]: r["Precio de lista"] for r in current_rows if r["Precio de lista"] is not None}
+        ids = {r["Código de producto"]: r.get("Id") or "" for r in current_rows}
         hi = {h: i for i, h in enumerate(summary_headers)}
         for row in summary_rows:
-            cur = prices.get(pr.normalize_product_code(row[hi["Código de producto"]]))
+            key = pr.normalize_product_code(row[hi["Código de producto"]])
+            cur = prices.get(key)
             est = pr.parse_money(row[hi["Estimated New Product Price"]])
             diff = None if cur in (None, 0) or est is None else (est - cur) / cur
             flag = "YES" if diff is not None and abs(diff) > threshold else ""
-            comparison[str(row[hi["Spreadsheet Row"]]).strip()] = (cur, diff, flag)
+            comparison[str(row[hi["Spreadsheet Row"]]).strip()] = (cur, diff, flag, ids.get(key, ""))
 
     def results_hook(wb, summary_headers, summary_rows):
         # Add the comparison columns while the results workbook is still in memory
@@ -381,6 +401,7 @@ def main() -> None:
     if perf_file:  # name/folder chosen in the window; BASE_DIR / an absolute path = that path
         import price_robot as pr
         pr.PERFORMANCE_BASENAME = perf_file
+    check_current_prices_file()
     apply_current_prices_choice()
     apply_performance_choice()
     apply_product_filter()

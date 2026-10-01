@@ -22,9 +22,9 @@ from app_runtime import DATA_DIR, OUTPUT_DIR, cache_file
 BASE_DIR = DATA_DIR
 PRODUCTS_FILE = BASE_DIR / "products.xlsx"
 CACHE_FILE = cache_file("store_search_cache.sqlite3")
-OUTPUT_BASENAME = "multi_store_price_matches"
-PERFORMANCE_BASENAME = str(OUTPUT_DIR / "multi_store_performance_analysis.xlsx")
-DEFAULT_WORKERS = 6
+OUTPUT_BASENAME = "coincidencias_de_precios"
+PERFORMANCE_BASENAME = str(OUTPUT_DIR / "analisis_de_desempeno.xlsx")
+DEFAULT_WORKERS = 100
 CACHE_TTL_HOURS = 12
 
 # Optional callables run on the in-memory workbooks just before they are saved,
@@ -598,6 +598,10 @@ def main():
     ws = choose_sheet(wb_in)
     hr = find_header_row(ws)
     hm = header_map(ws, hr)
+    from current_prices import PRODUCT_REQUIRED_COLUMNS
+    missing = [c for c in PRODUCT_REQUIRED_COLUMNS if mc.normalize(c) not in hm]
+    if missing:
+        raise ValueError(f"The products sheet is missing required column(s): {', '.join(missing)}")
     name_col = hm["nombre del producto"]
     code_col = hm.get("codigo de producto")
     erp_col = hm.get("erp id qbo")
