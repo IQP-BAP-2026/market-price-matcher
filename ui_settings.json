@@ -41,17 +41,19 @@
   },
   "last": {
     "lang": "en",
-    "products": "C:\\Users\\nrc94\\OneDrive\\Desktop\\matcher2\\products.xlsx",
+    "products": "C:\\Projects\\market-price-matcher\\input\\products.xlsx",
     "mode": "test",
-    "limit": 20,
+    "limit": 100,
     "contains": "",
     "type": "",
-    "perf": false,
+    "perf": true,
     "recent": {
       "products": [
+        "C:\\Projects\\market-price-matcher\\input\\products.xlsx",
         "C:\\Users\\nrc94\\OneDrive\\Desktop\\matcher2\\products.xlsx"
       ],
       "current": [
+        "C:\\Projects\\nathan\\market-price-matcher\\input\\pricebookcurrent.csv.xlsx",
         "C:\\Users\\nrc94\\OneDrive\\Desktop\\matcher2\\input\\pricebookcurrent.csv.xlsx",
         "C:\\Users\\nrc94\\OneDrive\\Desktop\\matcher2\\current_prices.xlsx"
       ],

@@ -151,6 +151,98 @@ class ReviewLoadingTests(unittest.TestCase):
 
 
 class ReviewUITests(unittest.TestCase):
+    def test_calculator_partial_prices_keyboard_save_and_undo(self):
+        fixture = test_price_review.SessionTests()
+        fixture.setUp()
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            window = ReviewWindow(root, fixture.results, fixture.template)
+            window.tree.selection_set("001")
+            window.on_select()
+            original = window.session.items["001"]["decision"]
+            self.assertEqual(window.tree_key(SimpleNamespace(state=0, keysym="c", char="c")), "break")
+            calculator = window._calculator
+            self.assertIsNone(calculator.average)
+            self.assertIn("disabled", calculator.use_button.state())
+            for inputs, expected in ((("2", "4", "", ""), 3),
+                                     (("2", "4", "9", ""), 5),
+                                     (("2", "4", "9", "5"), 5),
+                                     (("", "", "", "2,50"), 2.5)):
+                for variable, value in zip(calculator.values, inputs):
+                    variable.set(value)
+                self.assertEqual(calculator.average, expected)
+            for invalid in ("oops", "0", "-1", "nan", "inf"):
+                calculator.values[0].set(invalid)
+                self.assertIsNone(calculator.average)
+                self.assertIn("disabled", calculator.use_button.state())
+            calculator.values[0].set("")
+            calculator.attributes("-alpha", 0.0)
+            calculator.update()
+            calculator.entries[0].focus_force()
+            calculator.entries[0].event_generate("<space>")
+            calculator.update()
+            self.assertEqual(calculator.focus_get(), calculator.entries[1])
+            self.assertEqual(calculator.values[0].get(), "")
+            calculator.entries[1].event_generate("<space>")
+            calculator.update()
+            self.assertEqual(calculator.focus_get(), calculator.entries[2])
+            calculator.entries[2].event_generate("<space>")
+            calculator.update()
+            self.assertEqual(calculator.focus_get(), calculator.entries[3])
+            calculator.entries[3].focus_force()
+            calculator.entries[3].event_generate("<space>")
+            calculator.update()
+            self.assertEqual(calculator.focus_get(), calculator.entries[0])
+            self.assertTrue(calculator.winfo_exists())
+            calculator.entries[0].event_generate("<Return>")
+            root.update()
+            self.assertFalse(calculator.winfo_exists())
+            item = window.session.items["001"]
+            self.assertEqual((item["decision"], item["price"]), ("manual", 2.5))
+            self.assertEqual(window.price.get(), "2.50")
+            window.undo()
+            self.assertEqual(window.session.items["001"]["decision"], original)
+            window.open_calculator()
+            window._calculator.values[0].set("99")
+            window._calculator.destroy()
+            self.assertEqual(window.session.items["001"]["decision"], original)
+            window.destroy()
+        finally:
+            root.destroy()
+            fixture.tearDown()
+
+    def test_search_count_refreshes_when_scope_limit_and_filters_change(self):
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            with patch.object(app_ui.App, "load_options"), patch.object(app_ui, "warm_products_cache"):
+                app = app_ui.App(root)
+            app._rows = [(str(i), "rice" if i < 30 else "beans", "Food", "food") for i in range(50)]
+            app._opts_state = "ok"
+            app._apply_options()
+            app.contains_var.set("")
+            app.scope_var.set("first")
+            app.limit_var.set("20")
+            self.assertEqual(app.matching_count(), 20)
+            limited = app.count_lbl.cget("text")
+            app.total = app.done = 20  # a completed run must not affect the next run's count
+            app.scope_var.set("all")
+            self.assertEqual(app.matching_count(), 50)
+            self.assertNotEqual(app.count_lbl.cget("text"), limited)
+            self.assertEqual(str(app.limit_spin.cget("state")), "disabled")
+            app.contains_var.set("rice")
+            self.assertEqual(app.matching_count(), 30)
+            self.assertIn("30", app.count_lbl.cget("text"))
+            app.type_var.set("Other")
+            self.assertEqual(app.matching_count(), 0)
+            app.clear_filters()
+            self.assertEqual(app.matching_count(), 50)
+        finally:
+            for job in root.tk.call("after", "info"):
+                root.after_cancel(job)
+            root.destroy()
+
     def test_language_toggle_preserves_review_and_draft(self):
         fixture = test_price_review.SessionTests()
         fixture.setUp()

@@ -8,6 +8,100 @@ from review_config import PRICE_CHANGE_REVIEW_THRESHOLD, REVIEW_PRICE_DECIMALS
 from matcher_core import normalize
 
 
+class PriceCalculator(tk.Toplevel):
+    """Fast manual store entry; blank stores never contribute to the average."""
+
+    def __init__(self, parent, product, apply):
+        super().__init__(parent)
+        from price_robot_ui import C_BORDER, C_HEADER
+        self.tr = parent.tr
+        self.apply_price = apply
+        self.title(self.tr("Price calculator", "Calculadora de precios"))
+        self.transient(parent.winfo_toplevel())
+        self.resizable(False, False)
+        body = ttk.Frame(self, padding=16, style="Review.TFrame")
+        body.pack(fill="both", expand=True)
+        ttk.Label(body, text=product, wraplength=480, style="Review.TLabel").grid(
+            row=0, column=0, columnspan=2, sticky="w")
+        ttk.Label(body, text=self.tr("Space → next store · Enter → use average · Blank = no price",
+                                   "Espacio → siguiente tienda · Enter → usar promedio · Vacío = sin precio"),
+                  wraplength=480, style="ReviewMuted.TLabel").grid(
+            row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
+        sheet = tk.Frame(body, bg=C_BORDER, padx=1, pady=1)
+        sheet.grid(row=2, column=0, columnspan=2, sticky="ew")
+        self.values, self.entries = [], []
+        for index in range(4):
+            sheet.columnconfigure(index, weight=1, uniform="stores")
+            tk.Label(sheet, text=self.tr(f"Store {index + 1}", f"Tienda {index + 1}"),
+                     bg="#EAF0EA", fg=C_HEADER, font=parent.heading_font, pady=6).grid(
+                row=0, column=index, sticky="ew", padx=1, pady=1)
+            value = tk.StringVar(self)
+            entry = ttk.Entry(sheet, textvariable=value, width=10, justify="right", font=parent.body_font)
+            entry.grid(row=1, column=index, sticky="ew", padx=1, pady=1, ipady=6)
+            entry.bind("<space>", lambda event, i=index: self.advance(i))
+            entry.bind("<Return>", lambda _: self.submit())
+            self.values.append(value)
+            self.entries.append(entry)
+            value.trace_add("write", lambda *_: self.update_average())
+        self.summary = ttk.Label(body, style="Review.TLabel", wraplength=480)
+        self.summary.grid(row=3, column=0, columnspan=2, sticky="w", pady=12)
+        buttons = ttk.Frame(body, style="Review.TFrame")
+        buttons.grid(row=4, column=0, columnspan=2, sticky="e")
+        ttk.Button(buttons, text=self.tr("Cancel", "Cancelar"), command=self.destroy).pack(side="left", padx=6)
+        self.use_button = ttk.Button(buttons, text=self.tr("Use average", "Usar promedio"),
+                                     style="ReviewAccent.TButton", command=self.submit)
+        self.use_button.pack(side="left")
+        self.bind("<Escape>", lambda _: self.destroy())
+        self.bind("<Control-Return>", lambda _: self.submit())
+        self.update_average()
+        self.update_idletasks()
+        owner = parent.winfo_toplevel()
+        self.geometry(f"+{owner.winfo_rootx() + max(0, (owner.winfo_width() - self.winfo_reqwidth()) // 2)}"
+                      f"+{owner.winfo_rooty() + max(0, (owner.winfo_height() - self.winfo_reqheight()) // 2)}")
+        self.grab_set()
+        self.entries[0].focus_set()
+
+    def update_average(self):
+        prices = []
+        self.average = None
+        for value in self.values:
+            text = value.get().strip()
+            if not text:
+                continue
+            price = number(text.replace(",", "."))
+            if not valid_price(price):
+                self.summary.configure(text=self.tr("Enter a positive price or leave the store blank.",
+                                                    "Ingrese un precio positivo o deje la tienda vacía."))
+                self.use_button.state(["disabled"])
+                return
+            prices.append(price)
+        if prices:
+            self.average = round(sum(p / len(prices) for p in prices), REVIEW_PRICE_DECIMALS)
+            self.summary.configure(text=self.tr(
+                f"Average: ${self.average:.{REVIEW_PRICE_DECIMALS}f} · {len(prices)} stores",
+                f"Promedio: ${self.average:.{REVIEW_PRICE_DECIMALS}f} · {len(prices)} tiendas"))
+        else:
+            self.summary.configure(text=self.tr("Enter at least one store price.", "Ingrese el precio de al menos una tienda."))
+        self.use_button.state(["!disabled"] if self.average is not None else ["disabled"])
+
+    def advance(self, index):
+        text = self.values[index].get().strip()
+        if text and not valid_price(number(text.replace(",", "."))):
+            self.entries[index].focus_set()
+            self.entries[index].selection_range(0, "end")
+        else:
+            following = self.entries[(index + 1) % len(self.entries)]
+            following.focus_set()
+            following.selection_range(0, "end")
+        return "break"
+
+    def submit(self):
+        if self.average is not None:
+            self.apply_price(self.average)
+            self.destroy()
+        return "break"
+
+
 class _ReviewView:
     """The review screen. Used as its own window (ReviewWindow) or as a tab inside the main window (ReviewPanel)."""
     embedded = False
@@ -218,10 +312,15 @@ class _ReviewView:
             box.grid(row=0, column=index, sticky="nsew", padx=(0 if index == 0 else gap, 0))
             tk.Label(box, text=label, font=(FONT, 8, "bold"), bg="#F0F5F0", fg=C_MUTED).pack(anchor="w")
             if key == "new":
-                self.price_entry = ttk.Entry(box, textvariable=self.price, font=(FONT, 13 if self.compact else 16, "bold"), width=10, justify="right")
-                self.price_entry.pack(fill="x")
+                price_row = tk.Frame(box, bg="#F0F5F0")
+                price_row.pack(fill="x")
+                self.price_entry = ttk.Entry(price_row, textvariable=self.price, font=(FONT, 13 if self.compact else 16, "bold"), width=6, justify="right")
+                self.price_entry.pack(side="left", fill="x", expand=True)
                 self.price_entry.bind("<Return>", lambda _: self.manual())
                 self.price_entry.bind("<Escape>", self.cancel_edit)
+                self.calculator_button = ttk.Button(price_row, text=tr("Calculator [C]", "Calculadora [C]"),
+                                                    command=self.open_calculator)
+                self.calculator_button.pack(side="right", padx=(4, 0))
             else:
                 value = tk.Label(box, text="—", font=(FONT, 14 if self.compact else 18, "bold"), bg="#F0F5F0", fg=C_HEADER, anchor="e")
                 value.pack(fill="x")
@@ -243,8 +342,8 @@ class _ReviewView:
         for sequence, handler in (("<Control-z>", self._undo_key), ("<Control-Z>", self._undo_key),
                                   ("<Control-y>", self._redo_key), ("<Control-Y>", self._redo_key)):
             top.bind(sequence, handler)
-        shortcuts = ttk.Label(actions, text=tr("A accept · R reject · Type a price + Enter · Ctrl+Z undo · Ctrl+Y redo · Drag to select · Click a heading to sort",
-                                   "A aceptar · R rechazar · Escriba precio + Enter · Ctrl+Z deshacer · Ctrl+Y rehacer · Arrastre para seleccionar · Encabezado para ordenar"),
+        shortcuts = ttk.Label(actions, text=tr("A accept · R reject · C calculator · Type a price + Enter · Ctrl+Z undo · Ctrl+Y redo · Drag to select · Click a heading to sort",
+                                   "A aceptar · R rechazar · C calculadora · Escriba precio + Enter · Ctrl+Z deshacer · Ctrl+Y rehacer · Arrastre para seleccionar · Encabezado para ordenar"),
                   style="ReviewMuted.TLabel")
         if not self.compact:
             shortcuts.pack(anchor="w", fill="x", pady=(gap // 2, 0))
@@ -369,6 +468,9 @@ class _ReviewView:
     def tree_key(self, event):
         if event.state & 4:  # Ctrl shortcuts (undo/redo) are handled by the window, not price editing.
             return
+        if event.keysym.lower() == "c":
+            self.open_calculator()
+            return "break"
         if event.keysym.lower() in ("a", "r", "return"):
             self.decide("rejected" if event.keysym.lower() == "r" else "accepted")
             return "break"
@@ -656,6 +758,19 @@ class _ReviewView:
             return
         from candidate_review_ui import CandidateReviewWindow
         self._candidate_window = CandidateReviewWindow(self, keys[0])
+
+    def open_calculator(self):
+        keys = self.tree.selection()
+        if len(keys) != 1:
+            messagebox.showinfo(self.window_title(), self.tr("Select one product to calculate its price.",
+                                                           "Seleccione un producto para calcular su precio."), parent=self)
+            return
+        key = keys[0]
+
+        def apply(value):
+            self.run(lambda: self.session.decide([key], "manual", value, self.note.get()))
+
+        self._calculator = PriceCalculator(self, self.session.items[key]["row"].get(NAME, key), apply)
 
     def decide(self, decision, visible=False):
         keys = self.tree.get_children() if visible else self.tree.selection()

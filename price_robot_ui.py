@@ -2065,27 +2065,29 @@ class App:
         if not keep_review:
             self._build_review_tab()
 
-        # Two columns that both reach the bottom of the window, with no scrolling:
-        #   left  = the steps (1 files, 2 which products, 3 options, 4 search + progress)
-        #   right = technical details, which takes whatever height is left.
-        page = search_tab
+        # Search controls above a full-width log that fills the remaining height.
+        search_scroll = ScrollFrame(search_tab)
+        search_scroll.pack(fill="both", expand=True)
+        search_scroll.canvas.configure(bg=C_BG)
+        search_scroll.inner.configure(bg=C_BG)
+        page = search_scroll.inner
         main = tk.Frame(page, bg=C_BG)
         main.pack(fill="both", expand=True, padx=14, pady=10)
-        main.columnconfigure(0, weight=3, uniform="cols")
-        main.columnconfigure(1, weight=2, uniform="cols")   # left: steps 1-4 · right: technical details
-        main.rowconfigure(0, weight=1)
+        main.columnconfigure(0, weight=1)
+        main.rowconfigure(1, weight=1)
         left = tk.Frame(main, bg=C_BG)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
+        left.grid(row=0, column=0, sticky="nsew")
         left.columnconfigure(0, weight=1)
-        left.rowconfigure(3, weight=1)
-        right = tk.Frame(main, bg=C_BG)
-        right.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
-        right.columnconfigure(0, weight=1)
-        right.rowconfigure(1, weight=1)
+        left.columnconfigure(1, weight=1)
+        left.rowconfigure(2, weight=1)
+        bottom = tk.Frame(main, bg=C_BG)
+        bottom.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
+        bottom.columnconfigure(0, weight=1)
+        bottom.rowconfigure(1, weight=1)
 
         # 1. files
         c1 = Card(left, t("card_products"), "1", compact=True)
-        c1.grid(row=0, column=0, sticky="ew")
+        c1.grid(row=0, column=0, columnspan=2, sticky="ew")
         files = tk.Frame(c1.body, bg=C_CARD)
         files.pack(fill="x")
         files.columnconfigure(1, weight=1)
@@ -2106,7 +2108,7 @@ class App:
         # 2. which products — how many, then the two filters; they combine
         # (e.g. the first 50 "Tipo A seco" products whose name contains "leche").
         c3 = Card(left, t("card_which"), "2", compact=True)
-        c3.grid(row=1, column=0, sticky="ew", pady=(8, 0))
+        c3.grid(row=1, column=0, sticky="nsew", padx=(0, 4), pady=(8, 0))
         self.scope_var = tk.StringVar(value="first" if last["mode"] == "test" else "all")
         self.limit_var = tk.StringVar(value=str(last["limit"]))
         self.type_var = tk.StringVar(value=last["type"] or t("all_types"))
@@ -2141,7 +2143,7 @@ class App:
 
         # 3. options — fills the rest of the left column
         c_opt = Card(left, t("card_options"), "3", compact=True)
-        c_opt.grid(row=2, column=0, sticky="ew", pady=(8, 0))
+        c_opt.grid(row=1, column=1, sticky="nsew", padx=(4, 0), pady=(8, 0))
         self.perf_var = tk.BooleanVar(value=bool(last.get("perf", True)))
         opt_row = tk.Frame(c_opt.body, bg=C_CARD)
         opt_row.pack(fill="x")
@@ -2156,7 +2158,7 @@ class App:
 
         # 4. run — the rest of the left column
         c4 = Card(left, t("card_run"), "4", compact=True)
-        c4.grid(row=3, column=0, sticky="nsew", pady=(8, 0))
+        c4.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
         self.count_lbl = tk.Label(c4.body, text="", bg=C_CARD, fg=C_ACCENT_DARK, font=(FONT, 11, "bold"), anchor="w", justify="left")
         self.count_lbl.pack(fill="x")
         auto_wrap(self.count_lbl)
@@ -2179,8 +2181,8 @@ class App:
         self.detail_lbl.pack(fill="x")
         auto_wrap(self.detail_lbl)
 
-        # Results: a small card at the top of the right column, shown when a search finishes.
-        self.results_card = Card(right, t("card_results"), compact=True)
+        # Results sit above the log when a search finishes.
+        self.results_card = Card(bottom, t("card_results"), compact=True)
         self.results_row = tk.Frame(self.results_card.body, bg=C_CARD)
         self.results_row.pack(fill="x")
         self.btn_open_out = ttk.Button(self.results_row, text=t("open_results"),
@@ -2194,14 +2196,14 @@ class App:
         self.log_head = tk.Frame(c4.body, bg=C_CARD)   # results buttons go just above this
         self.log_head.pack(fill="x")
 
-        # Technical details: the whole right column, always shown.
-        c_log = Card(right, t("log_title_card"), compact=True)
+        # A quiet disclosure button; the expanded log fills the remaining height.
+        c_log = tk.Frame(bottom, bg=C_BG)
         c_log.grid(row=1, column=0, sticky="nsew")
-        self.log_visible = True
-        self.log_toggle = ttk.Button(c_log.body, text=t("hide_log"), style="Link.TButton", command=self.toggle_log)
-        self.log_frame = tk.Frame(c_log.body, bg=C_CARD)
-        self.log_frame.pack(fill="both", expand=True)
-        self.log = tk.Text(self.log_frame, height=8, wrap="none", font=("Consolas" if FONT == "Segoe UI" else "Courier", 9),
+        self.log_visible = False
+        self.log_toggle = ttk.Button(c_log, text=t("show_log"), style="Link.TButton", command=self.toggle_log)
+        self.log_toggle.pack(anchor="w", pady=(0, 4))
+        self.log_frame = tk.Frame(c_log, bg=C_CARD)
+        self.log = tk.Text(self.log_frame, height=4, width=28, wrap="word", font=("Consolas" if FONT == "Segoe UI" else "Courier", 9),
                            bg="#10160F", fg="#D6E4D6", insertbackground="white", relief="flat", padx=8, pady=6)
         ysb, setter = slim_scrollbar(self.log_frame, self.log.yview, "Dark.Vertical.TScrollbar")
         self.log.configure(yscrollcommand=setter)
@@ -2218,7 +2220,30 @@ class App:
         self.log.configure(state="disabled")
 
         self.products_var.trace_add("write", lambda *_: self._products_changed())
+        for variable in (self.scope_var, self.limit_var, self.type_var, self.contains_var):
+            variable.trace_add("write", lambda *_: self.update_count())
         self.refresh_settings_badge()
+
+        def fit_search_controls(event):
+            # Stack the two middle cards when their controls would be cramped.
+            narrow = event.width < 1050 * ui_scale(self.root)
+            c3.grid_configure(columnspan=2 if narrow else 1, padx=0 if narrow else (0, 4))
+            c_opt.grid_configure(row=2 if narrow else 1, column=0 if narrow else 1,
+                                 columnspan=2 if narrow else 1, padx=0 if narrow else (4, 0))
+            c4.grid_configure(row=3 if narrow else 2)
+
+        main.bind("<Configure>", fit_search_controls)
+
+        def fit_search_height(event=None):
+            # Fill tall windows, but keep the page scrollable below its natural height.
+            height = max(page.winfo_reqheight(), search_scroll.canvas.winfo_height())
+            if int(float(search_scroll.canvas.itemcget(search_scroll._win, "height"))) != height:
+                search_scroll.canvas.itemconfigure(search_scroll._win, height=height)
+
+        search_scroll.canvas.bind("<Configure>", fit_search_height, add="+")
+        page.bind("<Configure>", fit_search_height, add="+")
+        left.bind("<Configure>", lambda _: page.after_idle(fit_search_height), add="+")
+        bottom.bind("<Configure>", lambda _: page.after_idle(fit_search_height), add="+")
 
     # -- helpers ------------------------------------------------------------
     def _mode_changed(self):
@@ -2893,8 +2918,6 @@ class App:
         # --- error handling with friendly messages ---
         self.progress.configure(value=0)
         self.set_status("failed", C_ERROR)
-        if not self.log_visible:
-            self.toggle_log()
         if "ModuleNotFoundError" in tail or "No module named" in tail:
             self.set_detail(("missing_python", {}))
             if messagebox.askyesno(t("app_title"), t("ask_install")):
