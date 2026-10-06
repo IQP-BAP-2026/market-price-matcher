@@ -27,10 +27,11 @@ PERFORMANCE_BASENAME = str(OUTPUT_DIR / "analisis_de_desempeno.xlsx")
 DEFAULT_WORKERS = 100
 CACHE_TTL_HOURS = 12
 
-# Optional callables run on the in-memory workbooks just before they are saved,
-# so extra columns can be added without re-opening large files afterwards:
-#   RESULTS_WORKBOOK_HOOKS:     hook(workbook, summary_headers, summary_rows)
-#   PERFORMANCE_WORKBOOK_HOOKS: hook(workbook)
+# Optional callables, so the app can add to the output without re-opening large files afterwards:
+#   SUMMARY_HOOKS:              hook(summary_headers, summary_rows) — add columns before anything is written
+#   RESULTS_WORKBOOK_HOOKS:     hook(workbook, summary_headers, summary_rows) — just before the results are saved
+#   PERFORMANCE_WORKBOOK_HOOKS: hook(workbook) — just before the performance analysis is saved
+SUMMARY_HOOKS: list = []
 RESULTS_WORKBOOK_HOOKS: list = []
 PERFORMANCE_WORKBOOK_HOOKS: list = []
 
@@ -484,17 +485,20 @@ def create_performance_analysis(source_rows, product_headers, summary_headers, s
         from current_prices import read_current_prices
         current_prices = read_current_prices(current_path)
 
+    import results_format as rf
     out = BASE_DIR / PERFORMANCE_BASENAME
     wb = Workbook()
     dashboard = wb.active
-    dashboard.title = "Dashboard"
-    analysis = wb.create_sheet("Product Analysis")
-    candidates = wb.create_sheet("Candidates")
+    dashboard.title = rf.DASHBOARD_SHEET
+    analysis = wb.create_sheet(rf.ANALYSIS_SHEET)
+    candidates = wb.create_sheet(rf.CANDIDATES_SHEET)
 
-    extra_headers = ["Current BAP Price", "Average % Difference vs Current", "Needs Manual Review"]
-    analysis.append(product_headers + summary_headers + extra_headers)
+    # every product column, every robot column (translated), then the comparison and the review flag
+    extra_headers = ([] if "Current BAP Price" in summary_headers else ["Current BAP Price", "% Difference vs Current"])
+    extra_headers.append("Needs Manual Review")
     si = {h: i for i, h in enumerate(summary_headers)}
     summary_by_row = {r[si["Spreadsheet Row"]]: r for r in summary_rows}
+    analysis_rows = []
     for src in source_rows:
         srow = summary_by_row.get(src["row"])
         if not srow:
@@ -508,11 +512,20 @@ def create_performance_analysis(source_rows, product_headers, summary_headers, s
         original = list(src.get("original_values") or [])
         if len(original) < len(product_headers):
             original += [None] * (len(product_headers)-len(original))
-        analysis.append(original[:len(product_headers)] + list(srow) + [current, diff, needs_review])
-    style_sheet(analysis)
+        extras = ([] if "Current BAP Price" in summary_headers else [current, diff]) + [needs_review]
+        analysis_rows.append(original[:len(product_headers)] + list(srow) + extras)
+    # product columns keep their own (Spanish) names; the robot's columns are translated
+    keys = [f"\x00product:{h}" for h in product_headers] + list(summary_headers) + extra_headers
+    repeated = {"ERP Id (QBO)", "Código de producto", "Nombre del producto"} & set(product_headers)
+    layout = [(k, True) for k in keys if k not in repeated] + [("=alerts", True)]   # no repeated product columns
+    table = rf.Table(keys, analysis_rows, layout)
+    table.headers = [str(k).split(":", 1)[1] if str(k).startswith("\x00product:") else h
+                     for (k, _), h in zip(table.columns, table.headers)]
+    rf.write_sheet(analysis, table, style_sheet)
 
     from excel_export import prepare_candidates, save_with_candidates
-    prepare_candidates(candidates, detail_headers, detail_rows, style_sheet)
+    detail_table = rf.full_table(detail_headers, detail_rows, kind="detail", extra_display=("=reason",))
+    prepare_candidates(candidates, detail_table, style_sheet)
 
     total = len(summary_rows)
     est_idx = si["Estimated New Product Price"]
@@ -522,12 +535,12 @@ def create_performance_analysis(source_rows, product_headers, summary_headers, s
     multi_store = sum(1 for r in summary_rows if (r[store_idx] or 0) >= 2)
     ok = sum(1 for r in summary_rows if r[qual_idx] == "OK")
     rows = [
-        ["Metric", "Count", "Rate"],
-        ["Products Processed", total, 1 if total else 0],
-        ["Products With Estimate", with_est, with_est/total if total else 0],
-        ["Products With 2+ Stores", multi_store, multi_store/total if total else 0],
-        ["Products Marked OK", ok, ok/total if total else 0],
-        ["Candidate Rows", len(detail_rows), None],
+        ["Indicador", "Cantidad", "Porcentaje"],
+        ["Productos procesados", total, 1 if total else 0],
+        ["Productos con precio propuesto", with_est, with_est/total if total else 0],
+        ["Productos con 2 o más supermercados", multi_store, multi_store/total if total else 0],
+        ["Productos sin alertas", ok, ok/total if total else 0],
+        ["Productos de supermercado revisados", len(detail_rows), None],
     ]
     for row in rows:
         dashboard.append(row)
@@ -539,19 +552,40 @@ def create_performance_analysis(source_rows, product_headers, summary_headers, s
     for hook in PERFORMANCE_WORKBOOK_HOOKS:
         hook(wb)
 
-    # Useful formatting.
-    ah = {c.value: c.column for c in analysis[1]}
-    for name in ("Average Price / kg", "Median Price / kg", "Economy Price / kg", "Estimated New Product Price", "Min Price / kg", "Max Price / kg", "Current BAP Price"):
-        if name in ah:
-            for r in range(2, analysis.max_row+1):
-                analysis.cell(r, ah[name]).number_format = '$0.00'
-    if "Average % Difference vs Current" in ah:
-        for r in range(2, analysis.max_row+1):
-            analysis.cell(r, ah["Average % Difference vs Current"]).number_format = '0.0%'
     print(f"[EXPORT] Writing performance analysis: {len(detail_rows):,} candidates", flush=True)
-    save_with_candidates(wb, out, detail_rows,
-                         lambda done, total: print(f"[EXPORT] Performance candidates: {done:,}/{total:,}", flush=True))
+    save_with_candidates(wb, out, detail_table,
+                         lambda done, total: print(f"[EXPORT] Performance candidates: {done:,}/{total:,}", flush=True),
+                         sheet=rf.CANDIDATES_SHEET)
     print(f"Performance analysis saved: {out}")
+
+
+def write_results(output_path, summary_headers, summary_rows, detail_headers, detail_rows):
+    """Save the results file. What BAP sees: the summary and the store listings, in Spanish. Columns that
+    only the review reads are kept at the right, hidden; columns nobody needs are left out."""
+    import results_format as rf
+    output_path = Path(output_path)
+    summary_table = rf.Table(summary_headers, summary_rows, rf.SUMMARY_LAYOUT)
+    if output_path.suffix.lower() == ".csv":
+        with output_path.open("w",newline="",encoding="utf-8-sig") as f:
+            w=csv.writer(f); w.writerow(summary_table.headers); w.writerows(summary_table)
+        return
+    wb = Workbook(); sh=wb.active; sh.title=rf.SUMMARY_SHEET; dh=wb.create_sheet(rf.CANDIDATES_SHEET)
+    rf.write_sheet(sh, summary_table, style_sheet)
+    from excel_export import prepare_candidates, save_with_candidates
+    candidates_table = rf.Table(detail_headers, detail_rows, rf.CANDIDATES_LAYOUT, kind="detail")
+    prepare_candidates(dh, candidates_table, style_sheet)
+    for hook in RESULTS_WORKBOOK_HOOKS:
+        hook(wb, summary_headers, summary_rows)
+    print(f"[EXPORT] Writing results: {len(detail_rows):,} candidates", flush=True)
+    save_with_candidates(wb, output_path, candidates_table,
+                         lambda done, total: print(f"[EXPORT] Results candidates: {done:,}/{total:,}", flush=True),
+                         sheet=rf.CANDIDATES_SHEET)
+    from candidate_store import build_candidate_index
+    print("[EXPORT] Preparing fast review index", flush=True)
+    try:
+        build_candidate_index(output_path, detail_headers, detail_rows)
+    except Exception as exc:
+        print(f"[EXPORT] Review index will be rebuilt when opened: {exc}", flush=True)
 
 
 def main():
@@ -759,6 +793,9 @@ def main():
     for row in summary_rows:
         row.extend(getattr(mc, field) for field in calculation_fields)
 
+    for hook in SUMMARY_HOOKS:   # e.g. the current price and Salesforce Id of each product
+        hook(summary_headers, summary_rows)
+
     # Last safety net before anything is written: no control characters in any cell.
     summary_rows = [[clean_cell(v) for v in row] for row in summary_rows]
     detail_rows = [[clean_cell(v) for v in row] for row in detail_rows]
@@ -766,31 +803,7 @@ def main():
     output_path = Path(args.output)
     if not output_path.is_absolute():
         output_path = BASE_DIR / output_path
-    if output_path.suffix.lower() == ".csv":
-        with output_path.open("w",newline="",encoding="utf-8-sig") as f:
-            w=csv.writer(f); w.writerow(summary_headers); w.writerows(summary_rows)
-    else:
-        wb = Workbook(); sh=wb.active; sh.title="Summary"; dh=wb.create_sheet("Candidates")
-        sh.append(summary_headers); [sh.append(r) for r in summary_rows]
-        from excel_export import prepare_candidates, save_with_candidates
-        prepare_candidates(dh, detail_headers, detail_rows, style_sheet)
-        style_sheet(sh)
-        shi={c.value:c.column for c in sh[1]}
-        for r in range(2,sh.max_row+1):
-            for name in ("Average Price / kg","Median Price / kg","Economy Price / kg","Estimated New Product Price","Min Price / kg","Max Price / kg"):
-                sh.cell(r,shi[name]).number_format='$0.00'
-            sh.cell(r,shi["Price CV"]).number_format='0.0%'
-        for hook in RESULTS_WORKBOOK_HOOKS:
-            hook(wb, summary_headers, summary_rows)
-        print(f"[EXPORT] Writing results: {len(detail_rows):,} candidates", flush=True)
-        save_with_candidates(wb, output_path, detail_rows,
-                             lambda done, total: print(f"[EXPORT] Results candidates: {done:,}/{total:,}", flush=True))
-        from candidate_store import build_candidate_index
-        print("[EXPORT] Preparing fast review index", flush=True)
-        try:
-            build_candidate_index(output_path, detail_headers, detail_rows)
-        except Exception as exc:
-            print(f"[EXPORT] Review index will be rebuilt when opened: {exc}", flush=True)
+    write_results(output_path, summary_headers, summary_rows, detail_headers, detail_rows)
 
     elapsed=time.perf_counter()-started
     rate=len(source_rows)/elapsed*60 if elapsed and source_rows else 0

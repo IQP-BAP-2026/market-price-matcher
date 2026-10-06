@@ -41,23 +41,33 @@
   },
   "last": {
     "lang": "en",
-    "products": "C:\\Projects\\market-price-matcher\\input\\products.xlsx",
+    "products": "C:/Users/nrc94/Downloads/exported2product.xls.xlsx",
     "mode": "test",
-    "limit": 100,
+    "limit": 20,
     "contains": "",
     "type": "",
     "perf": true,
+    "show_log": false,
     "recent": {
       "products": [
+        "C:\\Users\\nrc94\\Downloads\\exported2product.xls.xlsx",
+        "C:\\Users\\nrc94\\OneDrive\\Desktop\\input\\products.xlsx",
+        "C:\\Users\\nrc94\\OneDrive\\Desktop\\market-price-matcher-main\\input\\products.xlsx",
         "C:\\Projects\\market-price-matcher\\input\\products.xlsx",
         "C:\\Users\\nrc94\\OneDrive\\Desktop\\matcher2\\products.xlsx"
       ],
       "current": [
+        "C:\\Users\\nrc94\\Downloads\\export_price_current_7.csv",
+        "C:\\Users\\nrc94\\OneDrive\\Desktop\\input\\pricebookcurrent.csv.xlsx",
+        "C:\\Users\\nrc94\\OneDrive\\Desktop\\market-price-matcher-main\\input\\pricebookcurrent.csv.xlsx",
         "C:\\Projects\\nathan\\market-price-matcher\\input\\pricebookcurrent.csv.xlsx",
         "C:\\Users\\nrc94\\OneDrive\\Desktop\\matcher2\\input\\pricebookcurrent.csv.xlsx",
         "C:\\Users\\nrc94\\OneDrive\\Desktop\\matcher2\\current_prices.xlsx"
       ],
-      "results": []
+      "results": [
+        "C:\\Users\\nrc94\\OneDrive\\Desktop\\market-price-matcher-main\\resultados\\coincidencias_de_precios.xlsx",
+        "C:\\Users\\nrc94\\OneDrive\\Desktop\\market-price-matcher-main\\output\\coincidencias_de_precios.xlsx"
+      ]
     }
   },
   "review_policy_version": 1,

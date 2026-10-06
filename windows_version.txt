@@ -6,6 +6,6 @@ VSVersionInfo(
     StringStruct('FileVersion', '1.0.0'),
     StringStruct('ProductName', 'Robot de Precios'),
     StringStruct('ProductVersion', '1.0.0'),
-    StringStruct('OriginalFilename', 'PriceRobot.exe')])]),
+    StringStruct('OriginalFilename', 'RobotDePrecios.exe')])]),
     VarFileInfo([VarStruct('Translation', [1033, 1200])])]
 )

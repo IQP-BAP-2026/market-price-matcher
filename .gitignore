@@ -6,6 +6,7 @@
 
 # Runtime caches and Python bytecode (including caches beside external results).
 cache/
+caché/
 __pycache__/
 *.py[cod]
 store_search_cache.sqlite3*
@@ -15,6 +16,7 @@ ui_products_cache.json
 
 # Generated exports and review decisions; keep input/ and input spreadsheets tracked.
 /output/
+/resultados/
 /multi_store_price_matches*.xlsx
 /coincidencias_de_precios*.xlsx
 /multi_store_price_matches*.csv

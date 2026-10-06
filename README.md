@@ -1,6 +1,6 @@
 # Banco de Alimentos Panamá — Price Robot
 
-Project layout: keep source, tests, build instructions and input spreadsheets in Git. `input/`, `products.xlsx` and `current_prices.xlsx` remain trackable. Runtime caches live in `cache/` (candidate indexes in a `cache/` folder beside their results), and new exports default to `output/`. Caches, outputs, review decisions/archives, local preferences, logs, bytecode, `build/` and `dist/` are ignored. Existing root-level exports are also ignored; ignoring/untracking generated files does not delete local copies.
+Project layout: keep source, build instructions and input spreadsheets in Git. `input/` (the products workbook and the Salesforce current-prices export) remains trackable. Runtime caches live in `caché/` (candidate indexes in a `caché/` folder beside their results), and new exports default to `resultados/` when running from source. Caches, outputs, review decisions/archives, local preferences, logs, bytecode, `build/` and `dist/` are ignored. Existing root-level exports are also ignored; ignoring/untracking generated files does not delete local copies.
 
 Estimates current market prices for Banco de Alimentos Panamá (BAP) products by searching supermarket websites, matching each BAP product to comparable store products, cleaning the prices, and applying the BAP pricing rule.
 
@@ -13,7 +13,7 @@ Supported supermarkets:
 
 It can be used two ways:
 
-- **Desktop app** (recommended) — a Spanish/English window, no command line needed. Double-click `PriceRobot.exe`, or use `launch.bat` when running from source.
+- **Desktop app** (recommended) — a Spanish/English window, no command line needed. Install it with `RobotDePrecios_Instalador.exe`, or use `launch.bat` when running from source.
 - **Command line** — `py price_robot.py …`, for scripting and debugging.
 
 Both use exactly the same matching and pricing code.
@@ -23,12 +23,21 @@ Both use exactly the same matching and pricing code.
 ## 1. Project files
 
 ```text
-PRICEB/
-├── launch.bat               # opens the desktop app (double-click)
-├── price_robot_ui.py        # the desktop app (window)
+market-price-matcher-main/
+├── launch.bat               # opens the desktop app from source (double-click)
+├── price_robot_ui.py        # the desktop app: Search prices tab, Advanced settings
+├── price_review_ui.py       # the Review prices tab (approve prices, export CSV)
+├── candidate_review_ui.py   # "Choose candidates…" window
+├── price_review.py          # review logic: confidence scores, decisions, CSV export
+├── review_config.py         # review scoring parameters
+├── candidate_store.py       # fast index of saved store listings for the review
+├── current_prices.py        # reads the Salesforce current-prices export
+├── excel_export.py          # fast Excel writing for large results
 ├── robot_launcher.py        # runs price_robot.py with the app's settings
 ├── price_robot.py           # the price robot (search, clean, price, Excel output)
 ├── matcher_core.py          # shared matching / pricing rules
+├── app_runtime.py           # where settings, caches and results are saved
+├── desktop_entry.py         # entry point of the .exe (app, worker, self-test)
 ├── store_parsers/           # one adapter per supermarket website
 │   ├── __init__.py
 │   ├── base.py
@@ -36,19 +45,29 @@ PRICEB/
 │   ├── superxtra.py
 │   ├── rey.py
 │   └── ribasmith.py
+├── assets/                  # header photos (header_photo_1.png … _4.png, real PNG files) and app_icon.ico
+├── PriceRobot.spec          # PyInstaller build recipe
+├── build_windows.ps1        # builds and checks dist/RobotDePrecios.exe, then the installer
+├── installer.iss            # Inno Setup script for RobotDePrecios_Instalador.exe
+├── windows_version.txt      # version information shown in the .exe properties
 ├── requirements.txt
-├── products.xlsx            # BAP product list (input)
-└── current_prices.xlsx      # current BAP prices (optional input)
+├── requirements-build.txt
+└── input/
+    ├── products.xlsx                # BAP product list
+    └── pricebookcurrent.csv.xlsx    # Salesforce current-prices export
 ```
+
+To change a header photo, replace the matching file in `assets/` with a **real PNG** (Tk cannot read JPEG files, even renamed to `.png`) and rebuild the executable. A wide photo works best; it is cropped to a slanted panel.
 
 Created automatically while working (safe to delete; they are rebuilt):
 
 | File | What it is |
 |---|---|
-| `cache/store_search_cache.sqlite3` | Saved supermarket responses (reused for 12 hours by default) |
-| `cache/ui_products_cache.json` | Saved product list so the app's filters load instantly |
+| `caché/store_search_cache.sqlite3` | Saved supermarket responses (reused for 12 hours by default) |
+| `caché/ui_products_cache.json` | Saved product list so the app's filters load instantly |
 | `__pycache__/` | Python's compiled files |
 | `ui_errors.log` | Only appears if the app hits an unexpected error |
+| `worker.log` | Only appears if the packaged search process cannot write its output to the app |
 
 `ui_settings.json` stores the app's language, recent files and Advanced settings. Deleting it resets them to defaults.
 
@@ -56,20 +75,36 @@ Created automatically while working (safe to delete; they are rebuilt):
 
 ## 2. Installation
 
-### Standalone Windows app
+### Installing on a BAP computer
 
-Use `dist/PriceRobot.exe` on 64-bit Windows. This single file includes Python, Tk, the scraper, review screens and Excel libraries; recipients do not need Python or Excel installed. Internet access is needed for supermarket searches. Copy the executable into a folder you can write to, open it, and select your product spreadsheet and optional current-price file. Spreadsheets, saved decisions and existing settings are not bundled into the executable.
+Run **`RobotDePrecios_Instalador.exe`** (no administrator rights needed). It:
 
-Settings are stored beside the executable, caches under `cache/`, and default exports under `output/`. If the executable's folder is read-only, these go under `%LOCALAPPDATA%\BAP Price Robot`. Results can also be saved to the output folder selected in Advanced settings. To retain an existing setup, copy `ui_settings.json` alongside the executable, and keep results with their corresponding `.review.json` files. The executable may take a few seconds to unpack its bundled libraries at startup.
+- installs `RobotDePrecios.exe` in `%LOCALAPPDATA%\Robot de Precios` — the app's settings (`ui_settings.json`), caches (`caché\`) and logs are saved there too;
+- creates **Documentos\Robot de Precios**, where results are saved (the real Documents folder, also when it lives in OneDrive);
+- adds a **Robot de Precios** shortcut to the desktop and the Start menu, and opens the app.
 
-Build on Windows with the desired Python interpreter:
+The executable includes Python, Tk, the scraper, review screens and Excel libraries; nothing else needs to be installed. Internet access is needed for supermarket searches. **Open folder** in the app opens the results folder (Documentos\Robot de Precios, or the folder chosen in Advanced settings → Results). Running the installer again over an existing installation updates the app and keeps its settings.
+
+To uninstall, use **Settings → Apps → Robot de Precios → Uninstall** (or *Uninstall Robot de Precios* in the Start menu). It closes the app, removes the AppData folder (app, settings, caches, logs) and both shortcuts, then asks whether to also delete the results in Documentos\Robot de Precios.
+
+### Building the executable and the installer
+
+On Windows, once:
 
 ```powershell
 python -m pip install -r requirements-build.txt
+winget install JRSoftware.InnoSetup
+```
+
+Then, from the project folder:
+
+```powershell
 .\build_windows.ps1 -Python python
 ```
 
-The build script produces `dist/PriceRobot.exe` and checks GUI startup plus the packaged worker. `PriceRobot.spec` controls the bundle. After source changes, rebuild the executable to include them. Optional diagnostic check: `PriceRobot.exe --self-test C:\path\report.json`.
+The script builds `dist\RobotDePrecios.exe` (`PriceRobot.spec` controls the bundle, including the header photos and `assets\app_icon.ico`), checks that it starts and that its background search process works, and then compiles `installer.iss` into **`dist\RobotDePrecios_Instalador.exe`** — the only file to give to BAP. If Inno Setup isn't installed, the script installs it with winget (or stops and says where to get it). After source changes, rebuild. Optional diagnostic check: `RobotDePrecios.exe --self-test C:\path\report.json`.
+
+To change the version shown in Settings → Apps, edit `AppVersion` in `installer.iss` (and `windows_version.txt` for the executable's properties).
 
 ### Running from source
 
@@ -87,57 +122,53 @@ If the packages are missing, the desktop app offers to install them for you.
 
 ## 3. Using the desktop app
 
-Double-click **`launch.bat`** (or run `py price_robot_ui.py`). The **ES / EN** switch in the top-right corner changes the language.
+Open **Robot de Precios** from the desktop shortcut (or, from source, double-click **`launch.bat`** / run `py price_robot_ui.py`). The window has two tabs: **1 · Search prices** and **2 · Review prices**. The **ES / EN** switch in the top-right corner changes the language at any time; the loaded review is kept.
 
-### 1 · Files
+### Search prices tab
 
-- **Products** — choose the BAP product workbook with **Browse…** (nothing is pre-selected). **Recent ▾** lists the last few files used.
-- **Create performance analysis** — on by default. Untick it to skip the second Excel file (dashboard + review columns); on big searches this saves time. The results file is created either way.
-- **Compare with current BAP prices** — tick to choose a Salesforce current-prices Excel or CSV file, using `ProductCode`, `Id` and `UnitPrice` headers. Column order does not matter. Results get the current price, the % difference, and a review flag for big changes (see §7).
+**1 · Files**
 
-### 2 · Supermarkets
+- **Products** — the BAP product workbook. **Browse…** chooses it; **Recent ▾** lists the last few files used. Nothing is pre-selected when the app opens.
+- **Current prices** — the current-prices report downloaded from Salesforce (Excel or CSV) with the columns `ProductCode`, `Id` and `UnitPrice`. It is required: the robot will not start unless both files have all their required columns, and it says which column is missing.
 
-Tick the stores to search.
+**2 · Which products?**
 
-### 3 · Which products
+- **How many** — *All products*, or *Only the first N* for a quick test.
+- **Filters** — *Type* (the `Sub-familia de Productos` column) and *Name contains* (ignores capitals and accents). The filters combine with the amount: for example, the first 50 `Tipo A seco` products whose name contains `leche`. **Clear filters** resets them.
 
-- **Quick test** — the first N products in the selected product type (for example, the first 20 `Tipo A seco` products). Choose all types to use the first N products overall. The type filter is applied before the limit.
-- **All products that match the filters** — selecting it opens the filters below it: *Product type* (the `Sub-familia de Productos` column) and *Name contains* (ignores capitals and accents). Filters are only used with this option.
-- **Only the problems from a previous search** — choose an earlier results file, then tick which problems to search again: *no price*, *to review*, *store errors*, *big price change* (the last one only if that search had price comparison on). After each search, its results file is filled in here automatically.
+**3 · Options**
 
-The line at the bottom of this section shows how many products will be searched.
+- **Advanced settings…** — see below. The line under it shows whether the default settings are in use and which supermarkets will be searched (choose the supermarkets in Advanced settings → Store search).
+- **Create performance analysis** — a second Excel file with a dashboard and review columns. On big searches it takes extra time; the results file is created either way.
 
-### Start, progress and results
+**4 · Search**
 
-Click **▶ Iniciar / Start**. **Stop** is only active while a search runs. The Progress section shows products done, elapsed time and time left. When finished it shows a summary (how many got a price, how many need review, big price changes) and buttons to open the results, the performance analysis and the folder. **Show technical details** shows the robot's full log.
+The line at the top shows how many products will be searched and the estimated time; it updates as soon as any choice above changes. Click **▶ Start**; **■ Stop** is only active while a search runs (stopping discards that search). The progress bar shows products done, elapsed time and time left. When finished, the line below it summarizes the results (how many got a price, how many need review, big price changes) and the results file opens in **2 · Review prices**. **Open results**, **Open performance analysis** and **Open folder** are always visible and become active when there is something to open. **Show technical details** shows the robot's full log on the right.
 
 If you're in another window when a long search finishes, the taskbar button flashes and the window title shows the result.
 
-### Review and approve prices
+### Review prices tab
 
-After a successful search, **Review prices** opens the human verification step. **Open review…** also opens an existing results workbook (Summary + Candidates) or summary CSV without repeating the search. The performance-analysis workbook is not required.
+The results of the last search open here automatically. **Open results file…** (or **Open another file…** / **Recent ▾** once a review is loaded) opens any earlier results workbook without searching again. The results file includes each product's Salesforce `Id` and current price, so the review and its CSV export do not need the current-prices file. The performance-analysis workbook is not required.
 
-1. Filter by confidence **1–5**, decision, or product name/code. Every product starts **Pending**, including high-confidence products. The table shows current, proposed and approved prices, dollar/percentage changes, and the human decision. Changes use the manually approved price when one has been entered.
-2. Select a product to read short review notes: comparable listings by store and relevant missing-price, size, search, or price-variation observations. **Full evidence** reveals the diagnostics and supermarket listings when needed. Both views scroll with the mouse wheel. The confidence grade describes the proposed estimate; it is not a probability that the price is correct.
-3. With the table focused, press **A** to accept or **R** to reject. Successful decisions automatically select the next visible item. Ctrl/Shift or click-and-drag selects multiple products; dragging past the table edge scrolls the selection. **Group actions → Accept/Reject visible group** acts only on the filtered rows and confirms the count before replacing decisions. Items without a usable price cannot be bulk accepted.
-4. To override a selected product, **start typing a number**, then press **Enter** to save and advance. You can also edit the fixed **New price** box and click **Save price**. No reason is required. **Escape** cancels a draft edit. Current price, new price and bold percentage change remain in fixed positions; the percentage updates as you type. **Undo** (or Ctrl+Z while the table is focused) reverses the latest decision batch. **Group actions → Reset selected to pending** clears decisions. The rejected/unpriced filter makes missing estimates easy to work through.
-5. **Export CSV…** creates a UTF-8 CSV containing exactly **`Id,UnitPrice`**, with prices written to two decimal places. `Id` is copied from the matching `ProductCode` row in the uploaded current-prices file. By default only explicitly accepted or manually approved prices are included. Pending, rejected and unpriced products are excluded. Export can proceed with pending products after displaying the pending count.
-
-**Include unchanged current prices** additionally includes positive existing prices, including products outside the search. Pending/rejected proposals never overwrite those prices. An unpriced bath mat is excluded unless a reviewer supplies and approves a price. Every exported product must have an `Id` in the uploaded current-prices file; export lists missing IDs and stops instead of guessing or silently dropping approved rows. Product metadata cannot substitute for a Salesforce record ID.
+1. Filter by confidence **1–5**, by decision (*All*, *Pending*, *Accepted / manual*, *Rejected*, *Rejected / no price — enter prices*) or by text search. A decision that no longer matches the filter stays in the list until you click **Refresh list**, so products don't disappear while you work. Every product starts **Pending**, including high-confidence products. The table shows confidence, code, product, current price, new (proposed) price, change % and decision. Below it, the selected product's current price, new price and change % are shown in fixed boxes. The confidence grade describes the proposed estimate; it is not a probability that the price is correct.
+2. Press **A** (or **Accept [A]**) to accept or **R** (**Reject [R]**) to reject; the next product is selected automatically. Accepting a product with no proposed price keeps its current BAP price. Ctrl/Shift-click or click-and-drag selects several products; dragging past the table edge scrolls.
+3. To set your own price, **start typing a number** and press **Enter**, or simply select another product — the typed price is saved either way. **Escape** cancels the draft. **Calculator [C]** opens a small calculator that averages store prices you type in. **Undo [Ctrl+Z]** and **Redo [Ctrl+Y]** reverse or repeat the latest decisions.
+4. **Export CSV…** creates a UTF-8 CSV containing exactly **`Id,UnitPrice`**, with prices written to two decimal places, ready for Salesforce Data Loader (*Update* on *PricebookEntry*). Only accepted and manually entered prices are included; pending and rejected products are left out. If products are still pending, the app shows how many and asks before exporting. Every exported product must have a Salesforce `Id`; the export lists products without one and stops instead of guessing.
 
 **Categories ▾** expands filters for product type (`Tipo A seco`, etc.) and a second classification: match group, family, product line, RepTrim category or GFN type. Match group is the matcher's first generated search query (for example `pasta tomate`), not an invented classification. Category choices combine with score, decision and text filters. Search also finds category names and ignores accents. Click **Sort by category ↕** to group similar products; click any table heading to sort by that column, including numeric price changes. Active category filters are counted on the collapsed button.
 
-**Choose candidates… / Elegir candidatos…** opens the selected product's saved listings in separate supermarket tabs. Each listing shows whether it is included, the matcher's original accepted/rejected decision, product price, normalized size, price per kg/unit and original reason. Select one or several listings and use **Include selected** or **Exclude selected**; the price preview updates across all supermarkets. **Open product page** opens the selected listing for verification. Listings without a usable normalized price cannot be included.
+**Choose candidates… / Elegir candidatos…** opens the selected product's saved listings in separate supermarket tabs. Each listing shows whether it is used in the price, the robot's original accepted/rejected decision and reason, product price, normalized size and price per kg/unit. Select one or several listings and use **Include [A]** or **Exclude [R]**; the proposal preview updates across all supermarkets. **Open page [O]** opens the selected listing in the browser for verification. Listings without a usable price or package size cannot be included.
 
-**Apply recalculated price** saves the choices, updates the proposed price and confidence, and returns the product to **Pending**, replacing any previous price approval. Accept the revised proposal through the normal review controls. Excluding every listing clears the proposal. **Cancel** discards draft choices; **Restore matcher choices** resets the draft to the original selections; the main review's **Undo** also reverses an applied candidate change. Original workbook evidence is preserved. Summary-only CSVs do not contain candidate details.
+**Apply new price** saves the choices, updates the proposed price and confidence, and returns the product to **Pending**, replacing any previous price approval. Accept the revised proposal through the normal review controls. Excluding every listing clears the proposal. **Cancel** discards draft choices; **Restore robot's choices** resets the draft to the original selections; the main review's **Undo** also reverses an applied candidate change. Original workbook evidence is preserved. Summary-only CSVs do not contain candidate details.
 
 The candidate picker supports search by product, SKU, rejection reason or search query, plus filters for included/excluded listings, reviewer changes and the matcher's original decision. Filters apply across supermarket tabs but never change the price calculation. Click any column heading to sort; click again to reverse. Prices and quantities sort numerically, with missing values last. Drag across rows to select a range (including automatic scrolling at the edges); Ctrl-drag adds to the selection. Ctrl/Shift-click also work.
 
-With the candidate list focused: **A / Enter** includes, **R / Delete** excludes and advances to the next visible listing, **Space** toggles the selection, **Ctrl+A** selects all visible listings in the current supermarket, **Ctrl+Z** undoes the last draft candidate change, and **O** opens the selected product page. **Ctrl+F** focuses search; **Ctrl+Enter** applies the draft; **Esc** cancels. Typing in search does not change candidate decisions. The picker also has an **Undo** button and visible/selected counts.
+With the candidate list focused: **A / Enter** includes, **R / Delete** excludes and advances to the next visible listing, **Space** toggles the selection, **Ctrl+A** selects all visible listings in the current supermarket, **Ctrl+Z / Ctrl+Y** undo and redo draft candidate changes, and **O** opens the selected product page. **Ctrl+F** focuses search; **Ctrl+Enter** applies the draft; **Esc** cancels. Typing in search does not change candidate decisions. Like the main review, filtered-out listings only leave the list when you click **Refresh list**.
 
 Recalculation uses the same package quantity, store weighting, market price level and BAP percentage formula as the scraper, without rerunning filters over the human's selected candidates. New results record the percentage, store-weight cap and economy percentile in the Summary sheet. Older results use the review's saved/current settings, falling back to code defaults for settings that were not saved.
 
-Decisions, candidate choices, explanations and run settings save next to the results as `*.xlsx.review.json` (or `*.csv.review.json`). Keep that file with the results to resume. If the results or current-price file changes, the previous decisions are archived and the new review starts pending. Close the review before starting another search. The default template is `current_prices.xlsx`; a selected current-prices file takes precedence.
+Decisions, candidate choices, explanations and run settings save next to the results as `*.xlsx.review.json` (or `*.csv.review.json`). Keep that file with the results to resume. If the results or current-price file changes, the previous decisions are archived and the new review starts pending. A new search's results replace the open review when the search finishes.
 
 Large exports stream the Candidates sheet directly to Excel instead of constructing a cell object for every value. Both workbooks retain the full candidate evidence, formatting and comparison columns. Faster ZIP compression can make the files larger. Saves use a temporary file so a failed export preserves the previous workbook, and the progress area identifies the Excel-writing stage.
 
@@ -161,13 +192,12 @@ Warnings then deduct points. The grade boundaries are 25/45/65/85 points for gra
 
 **Advanced settings → Review warnings → Price change that needs review** controls the shared absolute percentage limit, now **20%**: both +20% and −20% are within range; larger changes trigger concern. Existing settings using the former 30% default migrate once to 20%; other customized limits are retained. Saved reviews retain their threshold settings when reopened.
 
-Verification: `python -m unittest test_price_review -v` tests scoring, decisions, persistence and export. `python -m unittest test_review_ui.ReviewUITests -v` additionally tests the desktop controls with hidden Tk windows in both languages.
 
 ### Advanced settings
 
 Grouped in the order the robot works, each with a plain explanation and a live example:
 
-1. **Store search** — simultaneous searches, search memory (cache) and how long it lasts, when to stop searching.
+1. **Store search** — which supermarkets to search, simultaneous searches (default 100), search memory (cache) and how long it lasts, when to stop searching.
 2. **Package size** — which store package sizes count as comparable.
 3. **Price cleanup** — removing duplicates and prices far from the median.
 4. **BAP price** — the BAP percentage, regular vs. sale price, how supermarkets are combined.
@@ -213,7 +243,7 @@ The supplied format has all fields needed for comparison and CSV updates. Catego
 
 Legacy `Código de producto` / `Precio de lista` headers remain supported for comparison, but exports require an `Id` for each included product.
 
-In the app, choose it with *Compare with current BAP prices*. On the command line it is read from the folder you run in, if present.
+In the app, choose it under **Current prices** (the search will not start without it). On the command line, `current_prices.xlsx` is read from the folder you run in, if present.
 
 ---
 
@@ -364,24 +394,24 @@ Only the flags above send a product to review. A 1,000-product test showed they 
 
 ### Results file (`coincidencias_de_precios.xlsx` by default)
 
-- **Summary** — one row per BAP product: search terms and confidence, stores used, per-store averages, matches kept/removed, target quantity, average/median/economy/min/max price per kg, the market value level used, **Estimated New Product Price**, price spread, quality flag, request errors.
-- **Candidates** — one row per store product checked: store, search term, ACCEPTED/REJECTED, product name, URL, prices, normalized kg, size ratio, price per kg and the **reason**. This is where to look when a match or price seems wrong.
+Written in Spanish for BAP. `results_format.py` decides the sheet names, the headers and which columns are shown.
 
-`.csv` output is also possible (Summary only). The *Notes* column holds informational notes (price spread, packaging weight).
+- **Resumen** — one row per BAP product. Visible: *Código de producto*, *Nombre del producto*, *Peso del producto (kg)*, *Precio BAP actual*, **Precio BAP propuesto**, *Diferencia vs. actual*, *Cambio mayor a ±20%* (SÍ, highlighted; the label follows the configured limit), *Precio de mercado por kg*, *Supermercados*, *Productos comparables* and *Alertas* (the quality flags in plain Spanish).
+- **Candidatos** — one row per store product checked. Visible: product code and name, *Supermercado*, *Producto en el supermercado*, *Estado* (Aceptado/Rechazado), *Precio*, *Tamaño (kg)*, *Precio por kg*, *Motivo* (in plain Spanish) and *Enlace*.
+
+Columns that only the Review prices tab needs (search terms and confidence, per-store averages, the price statistics, the technical quality codes, the calculation settings, the Salesforce Id, …) are kept at the right of each sheet, **hidden**: BAP doesn't see them, but the review keeps working from the file alone. Columns nobody needs are left out. Results files from older versions (English headers, *Summary* / *Candidates* sheets) still open in the review.
+
+`.csv` output is also possible (Resumen only, every kept column).
 
 ### Performance analysis (`analisis_de_desempeno.xlsx` by default)
 
-- **Dashboard** — products processed, with an estimate, supported by 2+ stores, marked OK, candidate rows.
-- **Product Analysis** — the original spreadsheet columns plus the robot's result, current BAP price, % difference and *Needs Manual Review*.
-- **Candidates** — the full candidate audit.
+Everything in Spanish, with every column (this file is for checking how the robot performed):
 
-### Price comparison columns (app, with *Compare with current BAP prices* on)
+- **Panel** — products processed, with a proposed price, supported by 2+ supermarkets, without alerts, store products checked.
+- **Análisis de productos** — the original product-sheet columns plus all of the robot's columns, the current price and difference, *Necesita revisión* (SÍ/NO), *Alertas* and *Motivo de revisión* (quality alerts and big price changes).
+- **Candidatos** — the full candidate audit, with the technical reason and the plain-Spanish *Motivo*.
 
-- Results *Summary*: **Current BAP Price**, **% Difference vs Current**, **Price Change > 20%** (YES highlighted, label follows the configured threshold).
-- Results *Summary* also gets **Salesforce Id** (the PricebookEntry Id from the current-prices file), so a results file can be opened in the Review prices tab and exported to CSV on its own, without the current-prices file. Results from older versions without this column still ask for the current-prices file once; after that the saved review keeps its own copy.
-- Performance analysis: *Needs Manual Review* also becomes YES for big price changes, and a **Review Reason** column explains why.
-
-The default 20% threshold is in Advanced settings → Review warnings.
+The default 20% limit is in Advanced settings → Review warnings.
 
 ---
 
@@ -446,7 +476,7 @@ The regular/final price choice (`PRICE_BASIS`) is applied when results are match
 
 **"Could not save the results file"** — the file is open in Excel. Close it and search again.
 
-**The app shows an unexpected-error message** — details are in `ui_errors.log` in the project folder.
+**The app shows an unexpected-error message** — details are in `ui_errors.log`, in the folder the message names (`%LOCALAPPDATA%\Robot de Precios` for the installed app, or the project folder when running from source).
 
 **Many store errors** — the site may have changed, the internet may be down, or too many searches ran at once. Try fewer simultaneous searches and a fresh cache, then test stores one at a time:
 
@@ -463,7 +493,7 @@ If one store fails, its adapter in `store_parsers/` is the likely fix.
 
 **A strange match or price** — open the performance analysis, *Candidates* sheet, and check Target Product, Candidate Product, Store, Normalized kg, Size Ratio, Price / kg, Status and **Reason**.
 
-**No current-price comparison** — in the app, tick *Compare with current BAP prices* and choose the file. On the command line, put `current_prices.xlsx` in the folder you run from. Use `ProductCode` and `UnitPrice` headers; column positions are not used.
+**The search won't start because of the current-prices file** — choose the current-prices report downloaded from Salesforce; it needs the columns `ProductCode`, `Id` and `UnitPrice` (any order). The message names the missing column. On the command line, put `current_prices.xlsx` in the folder you run from.
 
 ---
 

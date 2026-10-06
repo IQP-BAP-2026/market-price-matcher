@@ -11,100 +11,9 @@ import webbrowser
 
 from price_review import NAME, PRICE, number
 from matcher_core import normalize
-
-
-# ---------------------------------------------------------------------------
-# Plain-language reasons. The robot writes short technical notes ("SIZE-DISTANT MATCH REMOVED: ratio=0.42; …");
-# each rule turns one kind of note into a sentence. Anything not recognised is shown as written.
-# ---------------------------------------------------------------------------
-def _pct(value):
-    try:
-        return f"{float(value) * 100:.0f} %"
-    except (TypeError, ValueError):
-        return "?"
-
-
-_REASON_RULES = [
-    (r"^accepted; sold by weight", lambda m: ("Aceptado: se vende por peso", "Accepted: sold by weight")),
-    (r"^accepted; size strategy=PREFERRED.*?ratio=([\d.]+)",
-     lambda m: (f"Aceptado: tamaño parecido ({_pct(m[1])} del producto BAP)",
-                f"Accepted: similar size ({_pct(m[1])} of the BAP product)")),
-    (r"^accepted; size strategy=CLOSE.*?ratio=([\d.]+)",
-     lambda m: (f"Aceptado: tamaño cercano ({_pct(m[1])} del producto BAP)",
-                f"Accepted: close size ({_pct(m[1])} of the BAP product)")),
-    (r"^accepted; size strategy=FALLBACK.*?ratio=([\d.]+)",
-     lambda m: (f"Aceptado: el tamaño más cercano disponible ({_pct(m[1])} del producto BAP)",
-                f"Accepted: nearest size available ({_pct(m[1])} of the BAP product)")),
-    (r"^accepted", lambda m: ("Aceptado", "Accepted")),
-    (r"SIZE-DISTANT MATCH REMOVED: ratio=([\d.]+)",
-     lambda m: (f"Tamaño muy distinto ({_pct(m[1])} del producto BAP)",
-                f"Size too different ({_pct(m[1])} of the BAP product)")),
-    (r"SIZE PEER REMOVED", lambda m: ("Sin tamaño, mientras otros productos sí lo tienen",
-                                      "No size, while other listings have one")),
-    (r"cannot normalize candidate to kg", lambda m: ("No se pudo leer el tamaño del paquete",
-                                                      "The package size couldn't be read")),
-    (r"cannot count units", lambda m: ("No se pudieron contar las unidades del paquete",
-                                       "The number of units couldn't be read")),
-    (r"missing required identity word\(s\): (.+)",
-     lambda m: (f"Le faltan palabras clave: {m[1]}", f"Missing key words: {m[1]}")),
-    (r"unexpected subtype for plain '(.+?)': (.+)",
-     lambda m: (f"Variante distinta de «{m[1]}»: {m[2]}", f"Different kind of “{m[1]}”: {m[2]}")),
-    (r"PRICE OUTLIER REMOVED: \$([\d.,]+)/kg vs median \$([\d.,]+)/kg",
-     lambda m: (f"Precio fuera de rango: ${m[1]}/kg frente a la mediana ${m[2]}/kg",
-                f"Price out of range: ${m[1]}/kg vs median ${m[2]}/kg")),
-    (r"different item size: target ([\d.]+), candidate ([\d.]+)",
-     lambda m: (f"Tamaño por unidad distinto: BAP {m[1]}, tienda {m[2]} (kg/L)",
-                f"Different unit size: BAP {m[1]}, store {m[2]} (kg/L)")),
-    (r"different dimensions: target (\S+), candidate (\S+)",
-     lambda m: (f"Medidas distintas: BAP {m[1]}, tienda {m[2]}", f"Different dimensions: BAP {m[1]}, store {m[2]}")),
-    (r"target word only appears after '(.+?)'",
-     lambda m: (f"La palabra clave solo aparece después de «{m[1]}» (ingrediente o sabor, no el producto)",
-                f"The key word only appears after “{m[1]}” (ingredient or flavour, not the product)")),
-    (r"different product: title leads with '(.+?)'",
-     lambda m: (f"Otro producto: el nombre empieza con «{m[1]}»", f"Different product: the name starts with “{m[1]}”")),
-    (r"speciality/premium version of the product: (.+)",
-     lambda m: (f"Versión especial o premium: {m[1]}", f"Special or premium version: {m[1]}")),
-    (r"preparation/mix, not the product itself: (.+)",
-     lambda m: (f"Mezcla o preparado, no el producto: {m[1]}", f"Mix or preparation, not the product: {m[1]}")),
-    (r"made from/with '(.+?)', not the product itself",
-     lambda m: (f"Hecho con «{m[1]}», no es el producto", f"Made with “{m[1]}”, not the product itself")),
-    (r"false[- ]positive (?:family )?term\(s\): (.+)",
-     lambda m: (f"Coincidencia engañosa: {m[1]}", f"Misleading match: {m[1]}")),
-    (r"alcoholic product: (.+)", lambda m: (f"Producto alcohólico: {m[1]}", f"Alcoholic product: {m[1]}")),
-    (r"pet product: (.+)", lambda m: (f"Producto para mascotas: {m[1]}", f"Pet product: {m[1]}")),
-    (r"non-food product for a food target: (.+)", lambda m: (f"No es un alimento: {m[1]}", f"Not a food product: {m[1]}")),
-    (r"breaded/prepared version of the product: (.+)",
-     lambda m: (f"Versión empanizada o preparada: {m[1]}", f"Breaded or prepared version: {m[1]}")),
-    (r"processed/canned product for a fresh-produce target: (.+)",
-     lambda m: (f"Procesado o enlatado (se busca fresco): {m[1]}", f"Processed or canned (fresh wanted): {m[1]}")),
-    (r"cooked/deli/seasoned version of a raw meat product: (.+)",
-     lambda m: (f"Versión cocida o de charcutería: {m[1]}", f"Cooked or deli version: {m[1]}")),
-    (r"physical-form mismatch: (.+)",
-     lambda m: ("Forma distinta (sólido frente a líquido)", "Different form (solid vs liquid)")),
-    (r"different/extra flavour\(s\): (.+)", lambda m: (f"Sabor distinto o adicional: {m[1]}", f"Different or extra flavour: {m[1]}")),
-    (r"NEAR-DUPLICATE REMOVED: overlaps SKU \S+ \((.+)\)",
-     lambda m: (f"Duplicado de «{m[1]}»", f"Duplicate of “{m[1]}”")),
-    (r"generic product word '(.+?)' appears too late",
-     lambda m: (f"«{m[1]}» aparece muy tarde en el nombre", f"“{m[1]}” appears too late in the name")),
-]
-_REASON_RULES = [(re.compile(pattern, re.I), build) for pattern, build in _REASON_RULES]
-
-
-def friendly_reason(reason, lang="es", short=False):
-    """The robot's technical note as a sentence in the reviewer's language. short=True drops what the
-    table already shows elsewhere ("Accepted:" — that's the Robot column — and "of the BAP product")."""
-    text = str(reason or "").strip()
-    for pattern, build in _REASON_RULES:
-        match = pattern.search(text)
-        if match:
-            es, en = build(match)
-            text = es if lang == "es" else en
-            if short:
-                text = re.sub(r"^(Aceptado|Accepted)(: |$)", "", text)
-                text = text.replace(" del producto BAP", "").replace(" of the BAP product", "")
-                text = text[:1].upper() + text[1:] if text else ("Aceptado" if lang == "es" else "Accepted")
-            return text
-    return text
+# Plain-language reasons ("SIZE-DISTANT MATCH REMOVED: ratio=0.42" → "Tamaño muy distinto (42 % …)").
+# They live in results_format so the results file can show them too.
+from results_format import friendly_reason
 
 
 _STORE_SITES = {"super99": "https://www.super99.com", "superxtra": "https://www.superxtra.com",
@@ -195,7 +104,7 @@ class CandidateReviewWindow(tk.Toplevel):
         style.configure("CandCard.TFrame", background=C_CARD)
 
         def card(row, pady=(0, gap)):
-            frame = tk.Frame(self, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1)
+            frame = tk.Frame(self, bg=C_CARD, highlightbackground=C_BORDER, highlightcolor=C_BORDER, highlightthickness=1)
             frame.grid(row=row, column=0, sticky="nsew", padx=gap * 2, pady=pady)
             return frame
 
@@ -218,7 +127,8 @@ class CandidateReviewWindow(tk.Toplevel):
                                                ("before", tr("PROPOSAL NOW", "PROPUESTA AHORA")),
                                                ("after", tr("WITH THIS SELECTION", "CON ESTA SELECCIÓN")))):
             box = tk.Frame(boxes, bg="#F0F5F0" if name != "after" else "#E3F1E5",
-                           highlightbackground=C_BORDER if name != "after" else C_ACCENT, highlightthickness=1,
+                           highlightbackground=C_BORDER if name != "after" else C_ACCENT,
+                           highlightcolor=C_BORDER if name != "after" else C_ACCENT, highlightthickness=1,
                            padx=gap, pady=2)
             box.grid(row=0, column=index, sticky="nsew", padx=(0 if index == 0 else gap // 2, 0))
             tk.Label(box, text=label, bg=box["bg"], fg=C_MUTED, font=(FONT, 7, "bold")).pack(anchor="w")

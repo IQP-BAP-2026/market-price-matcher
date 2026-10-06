@@ -39,18 +39,9 @@ def valid_price(value):
 
 
 def table(path, sheet=None):
-    if Path(path).suffix.lower() == ".csv":
-        with open(path, encoding="utf-8-sig", newline="") as stream:
-            return list(csv.DictReader(stream))
-    from openpyxl import load_workbook
-    wb = load_workbook(path, read_only=True, data_only=True)
-    try:
-        ws = wb[sheet] if sheet in wb.sheetnames else wb.active
-        rows = ws.iter_rows(values_only=True)
-        headers = next(rows)
-        return [dict(zip(headers, row)) for row in rows if any(v is not None for v in row)]
-    finally:
-        wb.close()
+    """The rows of a results file, with the internal column names (the file itself is in Spanish)."""
+    from results_format import SUMMARY_SHEET, read_records
+    return read_records(path, sheet or SUMMARY_SHEET)[1]
 
 
 def confidence(row, current, counts, settings=None, lang="en"):
@@ -191,7 +182,7 @@ class ReviewSession:
                 saved = json.loads(self.path.read_text(encoding="utf-8"))
             except (ValueError, OSError):
                 saved = None
-        summary_rows = table(self.results, "Summary")
+        summary_rows = table(self.results)
         if self.template is not None and self.template.is_file():
             self.fingerprint = [results_hash, file_hash(self.template)]
             self.template_rows = read_current_rows(self.template)

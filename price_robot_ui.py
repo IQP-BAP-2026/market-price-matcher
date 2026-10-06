@@ -22,12 +22,12 @@ import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
+from tkinter import font as tkfont
 from review_config import PRICE_CHANGE_REVIEW_THRESHOLD
 
 from app_runtime import DATA_DIR, OUTPUT_DIR, cache_file, is_frozen, worker_command
 
 BASE_DIR = DATA_DIR
-LAUNCHER = BASE_DIR / "robot_launcher.py"
 SETTINGS_FILE = BASE_DIR / "ui_settings.json"
 OPTIONS_CACHE = cache_file("ui_products_cache.json")
 ERROR_LOG = BASE_DIR / "ui_errors.log"   # remembers product lists so filters load instantly
@@ -50,22 +50,12 @@ LANG = "es"  # "es" or "en"
 STRINGS = {
     # main window
     "app_title": ("Robot de Precios", "Price Robot"),
-    "app_subtitle": ("Banco de Alimentos Panamá · precios de mercado en supermercados",
-                     "Banco de Alimentos Panamá · supermarket market prices"),
+    "app_subtitle": ("Banco de Alimentos Panamá", "Banco de Alimentos Panamá"),
     "card_products": ("Archivos", "Files"),
     "products_label": ("Productos:", "Products:"),
     "current_label": ("Precios actuales:", "Current prices:"),
-    "compare_hint": ("Descárguelo de Salesforce: un reporte de productos en Excel o CSV con las columnas "
-                     "ProductCode, Id y UnitPrice.",
-                     "Download it from Salesforce: a product report in Excel or CSV with the columns "
-                     "ProductCode, Id and UnitPrice."),
     "perf_check": ("Crear el análisis de desempeño", "Create performance analysis"),
-    "perf_hint": ("Un segundo archivo de Excel con un resumen y columnas de revisión. En búsquedas grandes tarda más.",
-                  "A second Excel file with a dashboard and review columns. Takes extra time on big searches."),
-    "results_label": ("Resultados anteriores:", "Previous results:"),
     "pick_current_title": ("Elegir archivo de precios actuales", "Choose current prices file"),
-    "pick_results_title": ("Elegir resultados de una búsqueda anterior", "Choose results from a previous search"),
-    "prob_missing": ("No se encontró ese archivo.", "That file was not found."),
     "err_current": ("Elija el archivo de precios actuales de Salesforce con «Buscar…» (Excel o CSV con ProductCode, Id y UnitPrice).",
                     "Choose the Salesforce current-prices file with “Browse…” (Excel or CSV with ProductCode, Id and UnitPrice)."),
     "err_products_columns": ("Al archivo de productos le faltan columnas que el robot necesita:\n\n{cols}\n\n{path}",
@@ -79,59 +69,34 @@ STRINGS = {
                             "with the ProductCode, Id and UnitPrice columns. Without the Salesforce Id the reviewed prices "
                             "can't be exported.\n\n{path}"),
     "err_file_read": ("No se pudo leer el archivo:\n{path}\n\n{error}", "The file could not be read:\n{path}\n\n{error}"),
-    "err_results": ("Elija un archivo de resultados anterior válido para volver a buscar sus problemas.",
-                    "Choose a valid previous results file to re-search its problems."),
-    "count_need_results": ("Elija el archivo de resultados anterior para ver cuántos productos se buscarán.",
-                           "Choose the previous results file to see how many products will be searched."),
     "browse": ("Buscar…", "Browse…"),
-    "card_stores": ("Supermercados", "Supermarkets"),
     "all": ("Todos", "All"),
     "card_which": ("¿Qué productos buscar?", "Which products?"),
-    "test_first": ("Prueba rápida: solo los primeros", "Quick test: only the first"),
     "products_word": ("productos", "products"),
-    "all_products": ("Todos los productos que coinciden con los filtros", "All products that match the filters"),
-    "problems_mode": ("Solo los problemas de una búsqueda anterior", "Only the problems from a previous search"),
-    "prob_none": ("Elija el archivo de resultados de una búsqueda anterior (por ejemplo coincidencias_de_precios.xlsx).",
-                  "Choose the results file from a previous search (for example coincidencias_de_precios.xlsx)."),
-    "prob_failed": ("No se pudo leer ese archivo. ¿Es un archivo de resultados del robot?",
-                    "Could not read that file. Is it a results file from the robot?"),
-    "prob_no_price": ("Sin precio ({n})", "No price ({n})"),
-    "prob_review": ("Para revisar ({n})", "To review ({n})"),
-    "prob_errors": ("Errores de tienda ({n})", "Store errors ({n})"),
-    "prob_price_change": ("Cambio de precio grande ({n})", "Big price change ({n})"),
-    "prob_price_change_na": ("Cambio de precio grande (sin comparación)", "Big price change (no comparison)"),
-    "prob_source": ("Tomados de {name} · {date}", "Taken from {name} · {date}"),
-    "filters_title": ("Filtros", "Filters"),
     "qty_label": ("Cantidad:", "How many:"),
     "qty_all": ("Todos los productos", "All products"),
     "qty_first": ("Solo los primeros", "Only the first"),
     "filters_label": ("Filtros:", "Filters:"),
     "type_short": ("Tipo:", "Type:"),
     "contains_short": ("Nombre contiene:", "Name contains:"),
-    "problems_hint": ("La cantidad y los filtros de arriba también se aplican.",
-                      "The amount and filters above also apply."),
     "clear_filters": ("Limpiar filtros", "Clear filters"),
     "will_search": ("Se buscarán {n} de {total} productos", "{n} of {total} products will be searched"),
     "will_search_none": ("Ningún producto coincide con estas opciones.", "No products match these options."),
     "count_waiting": ("Elija el archivo de productos para ver cuántos productos se buscarán.",
                       "Choose the products file to see how many products will be searched."),
-    "err_no_problems": ("No hay productos con problemas en las categorías marcadas.",
-                        "There are no problem products in the checked categories."),
     "confirm_many": ("Se van a buscar {n} productos. Puede tardar aproximadamente {t}.\n\n¿Continuar?",
                      "{n} products will be searched. This may take about {t}.\n\nContinue?"),
-    "name_contains": ("Nombre contiene:", "Name contains:"),
     "name_hint": ("ej. leche, arroz, agua", "e.g. leche, arroz, agua"),
+    "count_bad_limit": ("Escriba cuántos productos buscar (un número mayor que 0).",
+                        "Type how many products to search (a number greater than 0)."),
     "count_loading": ("Cargando el archivo de productos…", "Loading the products file…"),
     "count_missing": ("No se encontró el archivo de productos.", "The products file was not found."),
     "count_failed": ("No se pudo leer el archivo de productos.", "The products file could not be read."),
     "count_python": ("Faltan componentes de Python para leer el archivo de productos.",
                      "Python components are missing to read the products file."),
-    "product_type": ("Tipo de producto:", "Product type:"),
     "all_types": ("(Todos los tipos)", "(All types)"),
     "loading": ("cargando…", "loading…"),
     "file_not_found_short": ("archivo no encontrado", "file not found"),
-    "types_failed": ("no se pudieron cargar los tipos", "couldn't load types"),
-    "missing_python_short": ("faltan componentes de Python", "missing Python components"),
     "advanced_btn": ("⚙  Configuración avanzada…", "⚙  Advanced settings…"),
     "badge_custom": ("● {n} ajuste(s) personalizado(s)", "● {n} custom setting(s)"),
     "badge_default": ("Valores predeterminados", "Default settings"),
@@ -141,18 +106,15 @@ STRINGS = {
     "recent": ("Recientes ▾", "Recent ▾"),
     "recent_none": ("(todavía no hay archivos recientes)", "(no recent files yet)"),
     "stop": ("■  Detener", "■  Stop"),
-    "card_progress": ("PROGRESO", "PROGRESS"),
     "card_options": ("Opciones", "Options"),
-    "card_results": ("Resultados", "Results"),
     "log_title_card": ("Detalles técnicos", "Technical details"),
     "log_empty": ("Aquí aparece lo que hace el robot durante la búsqueda.",
                   "What the robot is doing appears here during the search."),
     "card_run": ("Buscar", "Search"),
+    "estimate_short": ("Tiempo estimado: menos de 1 minuto", "Estimated time: under 1 minute"),
     "estimate_line": ("Tiempo estimado: ≈ {t} (menos si ya se buscaron antes)",
                       "Estimated time: ≈ {t} (less if searched recently)"),
     "stores_line": ("Supermercados: {names}", "Supermarkets: {names}"),
-    "after_hint": ("Al terminar, los resultados se abren solos en «2 · Revisar precios».",
-                   "When it finishes, the results open by themselves in “2 · Review prices”."),
     "ready": ("Listo para empezar.", "Ready to start."),
     "open_results": ("Abrir resultados", "Open results"),
     "open_perf": ("Abrir análisis de desempeño", "Open performance analysis"),
@@ -168,8 +130,8 @@ STRINGS = {
     "review_other": ("Abrir otro archivo…", "Open another file…"),
     "review_file": ("Revisando: {name}", "Reviewing: {name}"),
     "review_loading": ("Abriendo los resultados…", "Opening the results…"),
-    "show_log": ("▸ Mostrar detalles técnicos", "▸ Show technical details"),
-    "hide_log": ("▾ Ocultar detalles técnicos", "▾ Hide technical details"),
+    "show_log": ("Mostrar detalles técnicos ▸", "Show technical details ▸"),
+    "hide_log": ("Ocultar detalles técnicos", "Hide technical details"),
     "pick_title": ("Elegir archivo de productos", "Choose products file"),
     "all_files": ("Todos los archivos", "All files"),
     "cant_open": ("No se pudo abrir:", "Could not open:"),
@@ -179,7 +141,6 @@ STRINGS = {
                   "Wait for the current search to finish before changing the language."),
     "err_products": ("Primero elija el archivo de productos con «Buscar…».",
                      "First choose the products file with “Browse…”."),
-    "choose_file_first": ("elija primero el archivo de productos", "choose a products file first"),
     "err_stores": ("Seleccione al menos un supermercado en Configuración avanzada → Búsqueda en tiendas.",
                    "Select at least one supermarket in Advanced settings → Store search."),
     "err_stores_short": ("seleccione al menos uno", "select at least one"),
@@ -1095,17 +1056,6 @@ def _code(value) -> str:
     return str(value).strip()
 
 
-def _money(value):
-    if value is None or isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        return float(value)
-    try:
-        return float(str(value).strip().replace("$", "").replace(",", ""))
-    except ValueError:
-        return None
-
-
 def _file_key(path: Path) -> str:
     st = path.stat()
     return f"v2|{path.resolve()}|{st.st_size}|{int(st.st_mtime)}"   # v2 = [code, name, type] rows
@@ -1187,6 +1137,7 @@ class Settings:
             "contains": "",
             "type": "",   # "" = all types
             "perf": True,     # create the performance analysis workbook
+            "show_log": False,  # technical details shown on the right
             "recent": {"products": [], "current": [], "results": []},
         }
 
@@ -1223,6 +1174,7 @@ class Settings:
         if self.last.get("type") in STRINGS["all_types"]:  # older versions stored the label
             self.last["type"] = ""
         self.last["products"] = ""  # always start with no products file selected
+        self.last["show_log"] = False  # technical details start hidden each time the app opens
         if self.last.get("lang") not in ("es", "en"):
             self.last["lang"] = "es"
 
@@ -1248,22 +1200,28 @@ class Settings:
 class Card(tk.Frame):
     """White panel with a title."""
 
-    def __init__(self, parent, title: str, step: str | None = None, compact: bool = False):
-        super().__init__(parent, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1)
-        head = tk.Frame(self, bg=C_CARD)
+    def __init__(self, parent, title: str, step: str | None = None, compact: bool = False, center: bool = False):
+        # highlightcolor = the border colour while focused: same as normal, so a card never shows a dark outline
+        super().__init__(parent, bg=C_CARD, highlightbackground=C_BORDER, highlightcolor=C_BORDER,
+                         highlightthickness=1, takefocus=0)
+        holder = self
+        if center:  # when the card is stretched taller, keep title and contents together in the middle
+            holder = tk.Frame(self, bg=C_CARD)
+            holder.pack(fill="x", expand=True)
+        head = tk.Frame(holder, bg=C_CARD)
         head.pack(fill="x", padx=14 if compact else 16, pady=(8, 2) if compact else (12, 4))
         if step:
             tk.Label(head, text=step, bg=C_ACCENT, fg="white", font=(FONT, 9, "bold"), width=2).pack(side="left", padx=(0, 8))
         tk.Label(head, text=title, bg=C_CARD, fg=C_TEXT, font=(FONT, 11, "bold")).pack(side="left")
-        self.body = tk.Frame(self, bg=C_CARD)
-        self.body.pack(fill="both", expand=True, padx=14 if compact else 16, pady=(2, 10) if compact else (4, 14))
+        self.body = tk.Frame(holder, bg=C_CARD)
+        self.body.pack(fill="both", expand=not center, padx=14 if compact else 16, pady=(2, 8) if compact else (4, 14))
 
 
 class LangToggle(tk.Frame):
     """Two-segment ES | EN switch."""
 
     def __init__(self, parent, bg: str, on_change, lang=None):
-        super().__init__(parent, bg=bg, highlightbackground="#8FB597", highlightthickness=1)
+        super().__init__(parent, bg=bg, highlightbackground="#8FB597", highlightcolor="#8FB597", highlightthickness=1)
         self.on_change = on_change
         for code in ("es", "en"):
             active = code == (LANG if lang is None else lang)
@@ -1480,7 +1438,7 @@ class AdvancedWindow(tk.Toplevel):
             self._nav_item(nav, sid, i, L(title), L(subtitle))
 
         # right: one scrollable page per step, each built the first time it is opened
-        self.content = tk.Frame(body, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1)
+        self.content = tk.Frame(body, bg=C_CARD, highlightbackground=C_BORDER, highlightcolor=C_BORDER, highlightthickness=1)
         self.content.pack(side="left", fill="both", expand=True, padx=(12, 0))
         self._refresh_counts()
         self.show(ADV_SECTIONS[0][0])
@@ -1549,7 +1507,7 @@ class AdvancedWindow(tk.Toplevel):
 
     def _row(self, parent, p):
         key = p["key"]
-        card = tk.Frame(parent, bg=C_CARD, highlightbackground=C_BORDER, highlightthickness=1)
+        card = tk.Frame(parent, bg=C_CARD, highlightbackground=C_BORDER, highlightcolor=C_BORDER, highlightthickness=1)
         card.pack(fill="x", padx=22, pady=(10, 0))
         top = tk.Frame(card, bg=C_CARD)
         top.pack(fill="x", padx=14, pady=(10, 0))
@@ -1835,6 +1793,117 @@ def input_files_problem(products, current) -> str | None:
     return None
 
 
+def _without_focus(layout):
+    """A ttk layout with every "*.focus" element taken out (its contents are kept)."""
+    result = []
+    for name, options in layout or []:
+        options = dict(options or {})
+        children = _without_focus(options.pop("children", None))
+        if name.endswith(".focus"):
+            result.extend(children)
+            continue
+        if children:
+            options["children"] = children
+        result.append((name, options))
+    return result
+
+
+def remove_focus_outlines(root, style):
+    """No focus outlines anywhere: no dashed ring on buttons / checkboxes / radio buttons / tabs, no dotted
+    ring on list rows, no darker border on the field being typed in, no highlight ring on tk widgets."""
+    for name in ("TButton", "TCheckbutton", "TRadiobutton", "TMenubutton", "TNotebook.Tab", "Toolbutton",
+                 "Item", "Treeview.Item", "TCombobox", "TEntry", "TSpinbox"):
+        try:
+            layout = style.layout(name)
+        except tk.TclError:
+            continue
+        if layout:
+            try:
+                style.layout(name, _without_focus(layout))
+            except tk.TclError:
+                pass
+    style.configure(".", focuscolor="")
+    for name in ("TEntry", "TCombobox", "TSpinbox"):   # same border whether or not the field is focused
+        style.map(name, bordercolor=[], lightcolor=[])
+    # The theme paints a focused drop-down list blue with white text; keep it dark text on white instead
+    # (the selected text inside it too, so nothing looks highlighted).
+    style.map("TCombobox", foreground=[("disabled", "#8A958C")], fieldbackground=[("readonly", "white")],
+              selectbackground=[("readonly", "white")], selectforeground=[("readonly", C_TEXT)])
+    for widget_class in ("Text", "Canvas", "Listbox", "Entry", "Spinbox", "Button", "Checkbutton",
+                         "Radiobutton", "Scale", "Label", "Frame"):
+        root.option_add(f"*{widget_class}.highlightThickness", 0)
+
+
+def asset_path(name) -> Path:
+    """A file shipped with the app (inside the .exe when built, next to this file when run from source)."""
+    base = Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+    return base / "assets" / name
+
+
+def header_photos(root, height):
+    """The header photos (assets/header_photo_1.png … _4.png), each scaled to `height` pixels tall."""
+    images = []
+    for number in range(1, 5):
+        path = asset_path(f"header_photo_{number}.png")
+        if not path.is_file():
+            continue
+        try:
+            image = tk.PhotoImage(master=root, file=str(path))
+        except tk.TclError:
+            continue
+        # Tk scales images by whole numbers only, so zoom by a and shrink by b: the smallest a/b (small
+        # numbers) that makes the photo at least `height` tall, so it always fills the panel.
+        target = height / image.height()
+        best = None
+        for b in range(1, 13):
+            for a in range(1, 6):
+                if a / b >= target - 1e-9 and (best is None or a / b < best[0] / best[1]):
+                    best = (a, b)
+        a, b = best or (1, 1)
+        if a > 1:
+            image = image.zoom(a)
+        images.append(image.subsample(b) if b > 1 else image)
+    return images
+
+
+def _panel_image(image, panel, slant, height, cut_left):
+    """A copy of `image` cropped to one panel's box (panel + slant wide), with the triangle left of the "/"
+    diagonal made see-through so the previous photo shows there."""
+    box_w = panel + slant
+    x0 = max(0, (image.width() - box_w) // 2)
+    y0 = max(0, (image.height() - height) // 2)
+    piece = tk.PhotoImage(width=box_w, height=height)
+    piece.tk.call(piece, "copy", image, "-from", x0, y0, x0 + box_w, y0 + height, "-to", 0, 0)
+    if cut_left:
+        for y in range(height):
+            edge = int(round(slant * (1 - y / max(1, height - 1))))   # diagonal: `slant` at the top, 0 at the bottom
+            for x in range(edge):
+                piece.transparency_set(x, y, True)
+    return piece
+
+
+def draw_header_photos(canvas, images, width, height, panel, slant, gap, green):
+    """Draw the photos as slanted "/" panels side by side, with a thin green diagonal between neighbours and
+    plain header green outside the first and last panel."""
+    key = (tuple(str(i) for i in images), width, height, panel, slant, gap)
+    if getattr(canvas, "_drawn", None) == key:
+        return
+    canvas._drawn = key
+    canvas.delete("all")
+    canvas.configure(width=width, height=height)
+    canvas._pieces = [_panel_image(image, panel, slant, height, cut_left=k > 0) for k, image in enumerate(images)]
+    for k, piece in enumerate(canvas._pieces):
+        canvas.create_image(k * panel, 0, image=piece, anchor="nw")
+    green_kw = dict(fill=green, outline=green)
+    canvas.create_polygon(-2, -2, slant, -2, 0, height + 2, -2, height + 2, **green_kw)            # left edge
+    for k in range(1, len(images)):
+        x = k * panel   # bottom of the k-th divider; its top is `slant` further right
+        canvas.create_polygon(x - gap / 2, height + 2, x + slant - gap / 2, -2, x + slant + gap / 2, -2,
+                              x + gap / 2, height + 2, **green_kw)
+    right = len(images) * panel
+    canvas.create_polygon(right, height + 2, right + slant, -2, width + 2, -2, width + 2, height + 2, **green_kw)
+
+
 def results_are_self_contained(path) -> bool:
     """True when a results file can be reviewed and exported without the current-prices file."""
     path = Path(path)
@@ -1845,18 +1914,21 @@ def results_are_self_contained(path) -> bool:
     except (ValueError, OSError):
         pass
     try:
-        if path.suffix.lower() == ".csv":
-            with path.open(encoding="utf-8-sig", newline="") as stream:
-                headers = next(csv.reader(stream), [])
+        from current_prices import is_spreadsheet, read_text_table
+        if not is_spreadsheet(path):
+            rows, _ = read_text_table(path)
+            headers = rows[0] if rows else []
         else:
             from openpyxl import load_workbook
+            from results_format import SUMMARY_SHEET, find_sheet
             wb = load_workbook(path, read_only=True)
             try:
-                ws = wb["Summary"] if "Summary" in wb.sheetnames else wb.active
+                ws = find_sheet(wb, SUMMARY_SHEET) or wb.active
                 headers = next(ws.iter_rows(max_row=1, values_only=True), ())
             finally:
                 wb.close()
-        return "Salesforce Id" in headers
+        from results_format import internal_header
+        return "Salesforce Id" in [internal_header(h) for h in headers]
     except Exception:
         return False
 
@@ -1889,7 +1961,14 @@ class App:
         self._log_text = ""
         self.progress_was_done = False
 
+        self._loading_slow = False             # "Loading…" only shows if the products file takes a while
+        self._loading_timer = None
+
         root.configure(bg=C_BG)
+        try:
+            root.attributes("-alpha", 0.0)     # build the window invisibly, then show it complete in one go
+        except Exception:
+            pass
         fit_window(root, 1250, 900, 820, 640)
         try:
             self._icons = [app_icon(64), app_icon(32), app_icon(16)]
@@ -1899,10 +1978,26 @@ class App:
         self._style()
         install_scrolling(root)
         self._build()
+        self.load_options()
+        self._settle_layout()
+        try:
+            root.attributes("-alpha", 1.0)
+        except Exception:
+            pass
         root.protocol("WM_DELETE_WINDOW", self.on_close)
         root.after(100, self._poll)
-        self.load_options()
         warm_products_cache()
+
+    def _settle_layout(self, measure=True):
+        """Draw the header photos straight away, so they don't pop in after the rest of the window."""
+        try:
+            if measure:
+                self.root.update_idletasks()
+            self._place_strip()
+            if measure:
+                self.root.update()   # let everything paint while the window is still invisible
+        except tk.TclError:
+            pass
 
     # -- style --------------------------------------------------------------
     def _style(self):
@@ -1911,6 +2006,7 @@ class App:
             st.theme_use("clam")
         except tk.TclError:
             pass
+        remove_focus_outlines(self.root, st)
         st.configure(".", font=(FONT, 10), background=C_CARD, foreground=C_TEXT)
         st.configure("TFrame", background=C_CARD)
         st.configure("TCheckbutton", background=C_CARD, font=(FONT, 10))
@@ -1997,10 +2093,12 @@ class App:
         self._log_text = "" if getattr(self, "_log_placeholder", False) else self.log.get("1.0", "end-1c")
         on_review_tab = self.tabs.select() == str(self.review_tab)
         # The review tab is kept as it is (the price sheet is not read again); only its texts change.
-        for w in self.root.winfo_children():
-            if not isinstance(w, tk.Toplevel) and w is not self.review_tab:
-                w.destroy()
+        # Build the new window first and only then remove the old one, so the screen never shows it empty.
+        old = [w for w in self.root.winfo_children() if not isinstance(w, tk.Toplevel) and w is not self.review_tab]
+        self._relabel_review_tab()   # (the slow part, done while the old window is still showing)
         self._build()
+        for w in old:
+            w.destroy()
         self._apply_options()
         self._render_status()   # status + details under the progress bar, now in the new language
         if self.output_path and self.output_path.exists() and self.progress_was_done:
@@ -2008,7 +2106,7 @@ class App:
             self._show_results_row()
         if on_review_tab:
             self.tabs.select(self.review_tab)
-        self._relabel_review_tab()
+        self._settle_layout(measure=False)   # same size as before: no need to show a half-drawn window first
 
     def on_lang_click(self, lang: str):
         if self.proc and lang != LANG:
@@ -2045,7 +2143,67 @@ class App:
         titles.pack(side="left", fill="x", expand=True)
         tk.Label(titles, text=t("app_title"), bg=C_HEADER, fg="white", font=(FONT, 17, "bold")).pack(anchor="w", padx=22, pady=(10, 0))
         tk.Label(titles, text=t("app_subtitle"), bg=C_HEADER, fg="#CFE3D2", font=(FONT, 10)).pack(anchor="w", padx=22, pady=(0, 8))
-        LangToggle(header, C_HEADER, self.on_lang_click).pack(side="right", padx=22)
+        toggle = LangToggle(header, C_HEADER, self.on_lang_click)
+        toggle.pack(side="right", padx=22)
+        # Four photos in slanted "/" panels in the open green space between the title and the ES/EN switch.
+        # They run from the top of the window down to where the white page starts (through the tab row, right
+        # of the tabs). The panels get narrower when there is less room, so all four always show in full.
+        strip = tk.Canvas(self.root, bg=C_HEADER, bd=0, highlightthickness=0)
+        self._header_photos = []
+        cache = self.__dict__.setdefault("_photo_cache", {})   # scaled photos, kept across language switches
+        tab_font = tkfont.Font(family=FONT, size=11, weight="bold")
+
+        def place_strip(_event=None):
+            if not strip.winfo_exists() or not hasattr(self, "tabs") or not self.tabs.winfo_exists():
+                return
+            try:   # measure from whichever page is open (the search or the review tab)
+                page = self.root.nametowidget(self.tabs.select())
+            except (KeyError, tk.TclError):
+                page = self._search_tab
+            scale = ui_scale(self.root)
+            # header + tab row, down to the page's top edge line (not over it, so the bottom of the green is level
+            # across the whole window); the edge is as thick as the page's bottom border
+            edge = max(0, (self.tabs.winfo_rooty() + self.tabs.winfo_height())
+                       - (page.winfo_rooty() + page.winfo_height()))
+            height = page.winfo_rooty() - header.winfo_rooty() - edge
+            # Right after a rebuild (e.g. a language switch with the review open) the new tabs can briefly sit
+            # over the header, which would measure only part of it: wait until the tabs are below the header.
+            laid_out = (height >= 20 and page.winfo_ismapped() and header.winfo_ismapped()
+                        and self.tabs.winfo_ismapped() and page.winfo_y() > 0
+                        and self.tabs.winfo_rooty() >= header.winfo_rooty() + header.winfo_height() - 2)
+            if not laid_out:
+                self.root.after(100, place_strip)   # the window isn't laid out yet: measure again shortly
+                height = getattr(self, "_strip_height", 0)   # meanwhile use the last size (a rebuild keeps it)
+                if height < 20:
+                    return
+            self._strip_height = height
+            if height not in cache:
+                cache.clear()
+                cache[height] = header_photos(self.root, height)
+            self._header_photos = cache[height]
+            if not self._header_photos:
+                return
+            title_right = max(w.winfo_reqwidth() for w in titles.winfo_children()) + int(22 * 2 * scale)
+            tabs_right = int(18 * scale) + sum(tab_font.measure(self.tabs.tab(i, "text")) + int((22 * 2 + 4) * scale)
+                                               for i in range(self.tabs.index("end")))
+            space_left = max(title_right, tabs_right + int(16 * scale))
+            header_width = header.winfo_width() if laid_out else self.root.winfo_width()
+            space_right = header_width - toggle.winfo_reqwidth() - int(22 * 2 * scale)
+            room = max(0, space_right - space_left)
+            count = len(self._header_photos)
+            slant, gap = round(height * 0.36), max(2, round(height * 0.05))
+            panel = min(round(height * 1.9), (room - slant) // count)   # width of each panel at its middle
+            if panel < height * 0.5:
+                strip.place_forget()
+                return
+            width = panel * count + slant
+            draw_header_photos(strip, self._header_photos, width, height, panel, slant, gap, C_HEADER)
+            strip.place(x=space_left + (room - width) // 2, y=0, width=width, height=height)
+            tk.Misc.lift(strip)   # (Canvas.lift would raise a drawing, not the widget)
+        self._place_strip = place_strip
+        header.bind("<Configure>", place_strip, add="+")
+        self.root.bind("<Configure>", lambda e: place_strip() if e.widget is self.root else None, add="+")
+        self.root.after_idle(place_strip)
 
         # Two tabs below the header: search, then review. The header strip continues behind the tabs.
         tabbar_pad = tk.Frame(self.root, bg=C_HEADER, height=4)
@@ -2053,6 +2211,7 @@ class App:
         self.tabs = ttk.Notebook(self.root, style="Main.TNotebook", takefocus=False)
         self.tabs.pack(fill="both", expand=True)
         search_tab = tk.Frame(self.tabs, bg=C_BG)
+        self._search_tab = search_tab
         # The review tab belongs to the window (not the notebook) so it survives a language change
         # without reading the price sheet again.
         existing = getattr(self, "review_tab", None)
@@ -2065,29 +2224,28 @@ class App:
         if not keep_review:
             self._build_review_tab()
 
-        # Search controls above a full-width log that fills the remaining height.
-        search_scroll = ScrollFrame(search_tab)
-        search_scroll.pack(fill="both", expand=True)
-        search_scroll.canvas.configure(bg=C_BG)
-        search_scroll.inner.configure(bg=C_BG)
-        page = search_scroll.inner
+        # Two columns that both reach the bottom of the window, with no scrolling:
+        #   left  = the steps (1 files, 2 which products, 3 options, 4 search + progress)
+        #   right = technical details, which takes whatever height is left.
+        page = search_tab
         main = tk.Frame(page, bg=C_BG)
-        main.pack(fill="both", expand=True, padx=14, pady=10)
-        main.columnconfigure(0, weight=1)
-        main.rowconfigure(1, weight=1)
+        main.pack(fill="both", expand=True, padx=14, pady=(8, 6))
+        main.columnconfigure(0, weight=7, uniform="cols")
+        main.columnconfigure(1, weight=3, uniform="cols")   # left: steps 1-4 · right: technical details (or blank)
+        main.rowconfigure(0, weight=1)
         left = tk.Frame(main, bg=C_BG)
-        left.grid(row=0, column=0, sticky="nsew")
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 6))
         left.columnconfigure(0, weight=1)
-        left.columnconfigure(1, weight=1)
-        left.rowconfigure(2, weight=1)
-        bottom = tk.Frame(main, bg=C_BG)
-        bottom.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
-        bottom.columnconfigure(0, weight=1)
-        bottom.rowconfigure(1, weight=1)
+        for card_row in range(4):   # spare height is shared by all four cards (contents stay centred)
+            left.rowconfigure(card_row, weight=1)
+        right = tk.Frame(main, bg=C_BG)
+        right.grid(row=0, column=1, sticky="nsew", padx=(6, 0))
+        right.columnconfigure(0, weight=1)
+        right.rowconfigure(0, weight=1)
 
         # 1. files
-        c1 = Card(left, t("card_products"), "1", compact=True)
-        c1.grid(row=0, column=0, columnspan=2, sticky="ew")
+        c1 = Card(left, t("card_products"), "1", compact=True, center=True)
+        c1.grid(row=0, column=0, sticky="nsew")
         files = tk.Frame(c1.body, bg=C_CARD)
         files.pack(fill="x")
         files.columnconfigure(1, weight=1)
@@ -2101,14 +2259,11 @@ class App:
         ttk.Entry(files, textvariable=self.current_var).grid(row=1, column=1, sticky="ew", padx=(10, 0), pady=(8, 0))
         self._recent_button(files, "current", self.current_var).grid(row=1, column=2, padx=(8, 0), pady=(8, 0))
         ttk.Button(files, text=t("browse"), command=self.pick_current).grid(row=1, column=3, padx=(6, 0), pady=(8, 0))
-        current_note = tk.Label(files, text=t("compare_hint"), bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w", justify="left")
-        current_note.grid(row=2, column=0, columnspan=4, sticky="ew", pady=(2, 0))
-        auto_wrap(current_note)
 
         # 2. which products — how many, then the two filters; they combine
         # (e.g. the first 50 "Tipo A seco" products whose name contains "leche").
-        c3 = Card(left, t("card_which"), "2", compact=True)
-        c3.grid(row=1, column=0, sticky="nsew", padx=(0, 4), pady=(8, 0))
+        c3 = Card(left, t("card_which"), "2", compact=True, center=True)
+        c3.grid(row=1, column=0, sticky="nsew", pady=(6, 0))
         self.scope_var = tk.StringVar(value="first" if last["mode"] == "test" else "all")
         self.limit_var = tk.StringVar(value=str(last["limit"]))
         self.type_var = tk.StringVar(value=last["type"] or t("all_types"))
@@ -2142,8 +2297,8 @@ class App:
         ttk.Button(hint_row, text=t("clear_filters"), style="Link.TButton", command=self.clear_filters).pack(side="right")
 
         # 3. options — fills the rest of the left column
-        c_opt = Card(left, t("card_options"), "3", compact=True)
-        c_opt.grid(row=1, column=1, sticky="nsew", padx=(4, 0), pady=(8, 0))
+        c_opt = Card(left, t("card_options"), "3", compact=True, center=True)
+        c_opt.grid(row=2, column=0, sticky="nsew", pady=(6, 0))
         self.perf_var = tk.BooleanVar(value=bool(last.get("perf", True)))
         opt_row = tk.Frame(c_opt.body, bg=C_CARD)
         opt_row.pack(fill="x")
@@ -2151,14 +2306,14 @@ class App:
         self.perf_check = ttk.Checkbutton(opt_row, text=t("perf_check"), variable=self.perf_var)
         self.perf_check.pack(side="left", padx=(16, 0))
         self.badge = tk.Label(c_opt.body, text="", bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w", justify="left")
-        self.badge.pack(fill="x", pady=(6, 0))
+        self.badge.pack(fill="x", pady=(4, 0))
         self.stores_lbl = tk.Label(c_opt.body, text="", bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w", justify="left")
         self.stores_lbl.pack(fill="x")
         auto_wrap(self.stores_lbl)
 
         # 4. run — the rest of the left column
-        c4 = Card(left, t("card_run"), "4", compact=True)
-        c4.grid(row=2, column=0, columnspan=2, sticky="nsew", pady=(8, 0))
+        c4 = Card(left, t("card_run"), "4", compact=True, center=True)
+        c4.grid(row=3, column=0, sticky="nsew", pady=(6, 0))
         self.count_lbl = tk.Label(c4.body, text="", bg=C_CARD, fg=C_ACCENT_DARK, font=(FONT, 11, "bold"), anchor="w", justify="left")
         self.count_lbl.pack(fill="x")
         auto_wrap(self.count_lbl)
@@ -2171,39 +2326,46 @@ class App:
         self.stop_btn.pack(side="right", padx=(8, 0))  # always visible, greyed out unless a search is running
         self.start_btn = ttk.Button(buttons, text=t("start"), style="Start.TButton", command=self.start)
         self.start_btn.pack(side="left", fill="x", expand=True)
-        ttk.Separator(c4.body).pack(fill="x", pady=(10, 6))
-        self.status_lbl = tk.Label(c4.body, text=t("ready"), bg=C_CARD, fg=C_TEXT, font=(FONT, 11, "bold"), anchor="w", justify="left")
-        self.status_lbl.pack(fill="x")
+        # Progress follows directly under the Start button.
+        progress_box = tk.Frame(c4.body, bg=C_CARD)
+        progress_box.pack(fill="x")
+        ttk.Separator(progress_box).pack(fill="x", pady=(10, 6))
+        status_row = tk.Frame(progress_box, bg=C_CARD)
+        status_row.pack(fill="x")
+        self.log_visible = False
+        self.log_toggle = ttk.Button(status_row, text=t("show_log"), style="Link.TButton", command=self.toggle_log)
+        self.log_toggle.pack(side="right", anchor="n")
+        self.status_lbl = tk.Label(status_row, text=t("ready"), bg=C_CARD, fg=C_TEXT, font=(FONT, 11, "bold"), anchor="w", justify="left")
+        self.status_lbl.pack(side="left", fill="x", expand=True)
         auto_wrap(self.status_lbl)
-        self.progress = ttk.Progressbar(c4.body, style="green.Horizontal.TProgressbar", mode="determinate", maximum=1, value=0)
+        self.progress = ttk.Progressbar(progress_box, style="green.Horizontal.TProgressbar", mode="determinate", maximum=1, value=0)
         self.progress.pack(fill="x", pady=(6, 2))
-        self.detail_lbl = tk.Label(c4.body, text="", bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w", justify="left")
+        self.detail_lbl = tk.Label(progress_box, text="", bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w", justify="left")
         self.detail_lbl.pack(fill="x")
         auto_wrap(self.detail_lbl)
 
-        # Results sit above the log when a search finishes.
-        self.results_card = Card(bottom, t("card_results"), compact=True)
-        self.results_row = tk.Frame(self.results_card.body, bg=C_CARD)
-        self.results_row.pack(fill="x")
+        # Results: always shown under the progress bar; greyed out until a search has produced them.
+        self.results_row = tk.Frame(progress_box, bg=C_CARD)
+        self.results_row.pack(fill="x", pady=(8, 0))
         self.btn_open_out = ttk.Button(self.results_row, text=t("open_results"),
                                        command=lambda: self.output_path and open_path(self.output_path))
         self.btn_open_perf = ttk.Button(self.results_row, text=t("open_perf"),
                                         command=lambda: self.perf_path and open_path(self.perf_path))
-        self.btn_open_dir = ttk.Button(self.results_row, text=t("open_folder"), command=lambda: open_path(self.output_path.parent if self.output_path else output_folder(self.settings.run)))
+        self.btn_open_dir = ttk.Button(self.results_row, text=t("open_folder"), command=self.open_output_folder)
         for b in (self.btn_open_out, self.btn_open_perf, self.btn_open_dir):
             b.pack(side="left", padx=(0, 8))
+            b.configure(state="disabled" if b is not self.btn_open_dir else "normal")
 
         self.log_head = tk.Frame(c4.body, bg=C_CARD)   # results buttons go just above this
         self.log_head.pack(fill="x")
 
-        # A quiet disclosure button; the expanded log fills the remaining height.
-        c_log = tk.Frame(bottom, bg=C_BG)
-        c_log.grid(row=1, column=0, sticky="nsew")
-        self.log_visible = False
-        self.log_toggle = ttk.Button(c_log, text=t("show_log"), style="Link.TButton", command=self.toggle_log)
-        self.log_toggle.pack(anchor="w", pady=(0, 4))
-        self.log_frame = tk.Frame(c_log, bg=C_CARD)
-        self.log = tk.Text(self.log_frame, height=4, width=28, wrap="word", font=("Consolas" if FONT == "Segoe UI" else "Courier", 9),
+        # Technical details: the right column. When hidden, the steps stretch across the whole width.
+        self.log_card = Card(right, t("log_title_card"), compact=True)
+        self.log_card.grid(row=0, column=0, sticky="nsew")
+        self._left, self._right = left, right
+        self.log_frame = tk.Frame(self.log_card.body, bg=C_CARD)
+        self.log_frame.pack(fill="both", expand=True)
+        self.log = tk.Text(self.log_frame, height=8, wrap="none", font=("Consolas" if FONT == "Segoe UI" else "Courier", 9),
                            bg="#10160F", fg="#D6E4D6", insertbackground="white", relief="flat", padx=8, pady=6)
         ysb, setter = slim_scrollbar(self.log_frame, self.log.yview, "Dark.Vertical.TScrollbar")
         self.log.configure(yscrollcommand=setter)
@@ -2219,45 +2381,34 @@ class App:
             self.log.insert("end", t("log_empty"), "placeholder")
         self.log.configure(state="disabled")
 
+        if last.get("show_log"):
+            self.toggle_log()
+        else:   # hidden: the steps use the whole width
+            right.grid_remove()
+            left.grid_configure(columnspan=2, padx=0)
         self.products_var.trace_add("write", lambda *_: self._products_changed())
-        for variable in (self.scope_var, self.limit_var, self.type_var, self.contains_var):
-            variable.trace_add("write", lambda *_: self.update_count())
+        # keep "N of M products will be searched" (and the time estimate) in step with every choice that changes it
+        for var in (self.scope_var, self.limit_var, self.type_var, self.contains_var):
+            var.trace_add("write", lambda *_: self.update_count())
         self.refresh_settings_badge()
-
-        def fit_search_controls(event):
-            # Stack the two middle cards when their controls would be cramped.
-            narrow = event.width < 1050 * ui_scale(self.root)
-            c3.grid_configure(columnspan=2 if narrow else 1, padx=0 if narrow else (0, 4))
-            c_opt.grid_configure(row=2 if narrow else 1, column=0 if narrow else 1,
-                                 columnspan=2 if narrow else 1, padx=0 if narrow else (4, 0))
-            c4.grid_configure(row=3 if narrow else 2)
-
-        main.bind("<Configure>", fit_search_controls)
-
-        def fit_search_height(event=None):
-            # Fill tall windows, but keep the page scrollable below its natural height.
-            height = max(page.winfo_reqheight(), search_scroll.canvas.winfo_height())
-            if int(float(search_scroll.canvas.itemcget(search_scroll._win, "height"))) != height:
-                search_scroll.canvas.itemconfigure(search_scroll._win, height=height)
-
-        search_scroll.canvas.bind("<Configure>", fit_search_height, add="+")
-        page.bind("<Configure>", fit_search_height, add="+")
-        left.bind("<Configure>", lambda _: page.after_idle(fit_search_height), add="+")
-        bottom.bind("<Configure>", lambda _: page.after_idle(fit_search_height), add="+")
 
     # -- helpers ------------------------------------------------------------
     def _mode_changed(self):
         self.limit_spin.configure(state="normal" if self.scope_var.get() == "first" else "disabled")
 
     def toggle_log(self):
+        """Show or hide the technical details on the right (the choice is remembered)."""
         if self.log_visible:
-            self.log_frame.pack_forget()
+            self._right.grid_remove()
+            self._left.grid_configure(columnspan=2, padx=0)
             self.log_toggle.configure(text=t("show_log"))
         else:
-            self.log_frame.pack(fill="both", expand=True)
+            self._left.grid_configure(columnspan=1, padx=(0, 6))
+            self._right.grid()
             self.log_toggle.configure(text=t("hide_log"))
             self.root.after(50, self.scroll_to_bottom)
         self.log_visible = not self.log_visible
+        self.settings.last["show_log"] = self.log_visible
 
     def scroll_to_bottom(self):
         self.log.see("end")   # the page itself no longer scrolls
@@ -2295,8 +2446,25 @@ class App:
         self.detail_lbl.configure(text="   ·   ".join(texts))
 
     def _show_results_row(self):
+        """Enable the result buttons that have something to open."""
+        ok = bool(self.output_path and Path(self.output_path).exists())
+        self.btn_open_out.configure(state="normal" if ok else "disabled")
+        self.btn_open_dir.configure(state="normal")   # the results folder can always be opened
         self.btn_open_perf.configure(state="normal" if self.perf_path and self.perf_path.exists() else "disabled")
-        self.results_card.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+
+    def _disable_results(self):
+        for b in (self.btn_open_out, self.btn_open_perf):
+            b.configure(state="disabled")
+        self.btn_open_dir.configure(state="normal")
+
+    def open_output_folder(self):
+        """Open the folder results are saved to (Documents\\Robot de Precios unless changed in Advanced settings)."""
+        folder = output_folder(self.settings.run)
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        open_path(folder)
 
     def refresh_settings_badge(self):
         if getattr(self, "stores_lbl", None) is not None:
@@ -2342,12 +2510,19 @@ class App:
         btn.configure(command=lambda b=btn: self._show_recent(b, kind, var))
         return btn
 
-    def _show_recent(self, btn, kind: str, var: tk.StringVar):
+    def _recent_results_button(self, parent):
+        """'Recientes ▾' for the review tab: reopen one of the last results files reviewed."""
+        btn = ttk.Button(parent, text=t("recent"), style="Small.TButton")
+        btn.configure(command=lambda b=btn: self._show_recent(b, "results", on_pick=lambda f: self.open_review(path=f)))
+        return btn
+
+    def _show_recent(self, btn, kind: str, var: tk.StringVar | None = None, on_pick=None):
         files = [f for f in self.settings.last.get("recent", {}).get(kind, []) if Path(f).is_file()]
         menu = tk.Menu(self.root, tearoff=0, font=(FONT, 10))
+        pick = on_pick or (lambda f: var.set(f))
         if files:
             for f in files:
-                menu.add_command(label=f"{Path(f).name}    —    {Path(f).parent}", command=lambda f=f: var.set(f))
+                menu.add_command(label=f"{Path(f).name}    —    {Path(f).parent}", command=lambda f=f: pick(f))
         else:
             menu.add_command(label=t("recent_none"), state="disabled")
         menu.tk_popup(btn.winfo_rootx(), btn.winfo_rooty() + btn.winfo_height())
@@ -2375,6 +2550,7 @@ class App:
         self.review_file_lbl.pack(side="left", fill="x", expand=True)
         self.review_other_btn = ttk.Button(bar, text=t("review_other"), style="Small.TButton",
                                            command=lambda: self.open_review(choose=True))
+        self.review_recent_btn = self._recent_results_button(bar)
         self.review_host = tk.Frame(self.review_tab, bg=C_BG)
         self.review_host.pack(fill="both", expand=True)
         self._show_review_placeholder()
@@ -2382,6 +2558,7 @@ class App:
     def _relabel_review_tab(self):
         """After a language change: translate the review tab in place, keeping the loaded review and its state."""
         self.review_other_btn.configure(text=t("review_other"))
+        self.review_recent_btn.configure(text=t("recent"))
         if self._review_window is not None:
             path = (getattr(self, "_review_args", None) or ("",))[0]
             self.review_file_lbl.configure(text=t("review_file", name=Path(path).name) if path else "")
@@ -2398,23 +2575,35 @@ class App:
         self._review_args = None
         self.review_file_lbl.configure(text="")
         self.review_other_btn.pack_forget()
+        self.review_recent_btn.pack_forget()
         box = Card(self.review_host, t("review_empty_title") if text_key == "review_empty" else t("tab_review"))
         box.pack(fill="x", padx=18, pady=(8, 0))
         msg = tk.Label(box.body, text=t(text_key), bg=C_CARD, fg=C_TEXT, font=(FONT, 10), anchor="w", justify="left")
         msg.pack(fill="x")
         auto_wrap(msg)
         if text_key == "review_empty":
-            ttk.Button(box.body, text=t("review_open"), command=lambda: self.open_review(choose=True)).pack(anchor="w", pady=(12, 0))
+            open_row = tk.Frame(box.body, bg=C_CARD)
+            open_row.pack(anchor="w", pady=(12, 0))
+            ttk.Button(open_row, text=t("review_open"), command=lambda: self.open_review(choose=True)).pack(side="left")
+            self._recent_results_button(open_row).pack(side="left", padx=(8, 0))
 
-    def open_review(self, choose=False):
+    def open_review(self, choose=False, path=None):
+        """Open results in the review tab: this search's results, a file chosen in a dialog (choose=True), or a
+        given file (path=…, e.g. from Recientes)."""
         if getattr(self, "_review_loading", False):
             self.set_status("loading_review")
             return
         if self.proc:
             messagebox.showinfo(t("app_title"), L(("Espere a que termine la búsqueda.", "Wait for the search to finish.")))
             return
-        path = self.output_path
-        if choose or not path:
+        if path:
+            choose = True   # a file picked from Recientes is treated like one chosen in the dialog
+            if not Path(path).is_file():
+                messagebox.showerror(t("app_title"), t("file_not_found_short") + f":\n{path}", parent=self.root)
+                return
+        else:
+            path = None if choose else self.output_path   # "choose" = always ask with the file dialog
+        if not path:
             path = filedialog.askopenfilename(parent=self.root, title=L(("Elegir resultados para revisar", "Choose results to review")),
                                               filetypes=[("Results", "*.xlsx *.csv")])
             if not path:
@@ -2461,8 +2650,11 @@ class App:
             panel.pack(fill="both", expand=True)
             self._review_window = panel
             self._review_args = (path, template, settings, products)
+            self.remember_recent("results", path)   # for the Recientes buttons in the review tab
+            self.settings.save()
             self.review_file_lbl.configure(text=t("review_file", name=Path(path).name))
-            self.review_other_btn.pack(side="right")
+            self.review_recent_btn.pack(side="right")
+            self.review_other_btn.pack(side="right", padx=(0, 6))
             key, kw, color = previous_status
             self.set_status(key, color, **kw)   # put back what the status line said before loading
 
@@ -2511,6 +2703,10 @@ class App:
             self._apply_options()
             return
         self._opts_state = "loading"
+        self._loading_slow = False
+        if self._loading_timer is not None:
+            self.root.after_cancel(self._loading_timer)
+        self._loading_timer = self.root.after(350, self._loading_is_slow)
         self._apply_options()
 
         def work():
@@ -2523,6 +2719,12 @@ class App:
                 self.call_ui(lambda: self._options_loaded([], err, text))
 
         threading.Thread(target=work, daemon=True).start()
+
+    def _loading_is_slow(self):
+        self._loading_timer = None
+        if self._opts_state == "loading":
+            self._loading_slow = True
+            self.update_count()
 
     def _options_loaded(self, rows, error, path_text):
         if not same_path(path_text, self.products_var.get()):
@@ -2552,9 +2754,19 @@ class App:
         self.update_count()
 
     # -- live product count ---------------------------------------------------
+    def _limit_value(self) -> int | None:
+        """The "only the first N" number, or None when it isn't a whole number above 0 (Start refuses it too)."""
+        try:
+            value = int(self.limit_var.get().strip())
+        except (ValueError, tk.TclError):
+            return None
+        return value if value >= 1 else None
+
     def matching_count(self) -> int | None:
         """How many products the robot will search with the current choices (None if unknown)."""
         if self._opts_state != "ok":
+            return None
+        if self.scope_var.get() == "first" and self._limit_value() is None:
             return None
         ptype = norm(self.selected_type())
         contains = norm(self.contains_var.get())
@@ -2566,10 +2778,7 @@ class App:
                 continue
             n += 1
         if self.scope_var.get() == "first":
-            try:
-                n = min(n, max(1, int(self.limit_var.get())))
-            except ValueError:
-                pass
+            n = min(n, self._limit_value())
         return n
 
     def update_count(self):
@@ -2579,17 +2788,23 @@ class App:
         n = self.matching_count()
         if getattr(self, "estimate_lbl", None) is not None:
             run = self.settings.run
-            self.estimate_lbl.configure(text=t("estimate_line", t=fmt_duration(estimate_run_seconds(
-                n, run.get("workers", 1), len(run.get("stores") or STORES)))) if n else "")
+            secs = estimate_run_seconds(n, run.get("workers", 1), len(run.get("stores") or STORES)) if n else 0
+            # small runs: the per-product math says a few seconds, but starting up takes longer than that
+            self.estimate_lbl.configure(text="" if not n else t("estimate_short") if secs < 60
+                                        else t("estimate_line", t=fmt_duration(secs)))
         if n is None:
             state = self._opts_state
-            if state == "error":
+            if state == "ok":   # the products are known, so the "first N" number is what's missing
+                text, color = "⚠  " + t("count_bad_limit"), C_WARN
+            elif state == "error":
                 err = self._opts_error or ""
                 key = "count_python" if ("ModuleNotFoundError" in err or "No module named" in err) else "count_failed"
                 text, color = "⚠  " + t(key), C_WARN
             elif state == "missing_file":
                 text, color = "⚠  " + t("count_missing"), C_ERROR
             elif state == "loading":
+                if not self._loading_slow:
+                    return   # a quick load goes straight to the count, without flashing "Loading…" first
                 text, color = t("count_loading"), C_MUTED
             elif state == "no_file":
                 text, color = t("count_waiting"), C_MUTED
@@ -2703,7 +2918,7 @@ class App:
         self.progress_was_done = False
         self.log_tail = []
         self.stopped_by_user = False
-        self.results_card.grid_remove()
+        self._disable_results()
         self.progress.configure(mode="indeterminate", value=0)
         self.progress.start(12)
         self.set_status("reading")
@@ -2918,6 +3133,8 @@ class App:
         # --- error handling with friendly messages ---
         self.progress.configure(value=0)
         self.set_status("failed", C_ERROR)
+        if not self.log_visible:
+            self.toggle_log()
         if "ModuleNotFoundError" in tail or "No module named" in tail:
             self.set_detail(("missing_python", {}))
             if messagebox.askyesno(t("app_title"), t("ask_install")):
@@ -2952,33 +3169,22 @@ class App:
         self.root.bind("<FocusIn>", restore)
 
     def _summarize(self, path: Path):
-        """Count estimates and flags from the Summary sheet for a plain-language result."""
+        """Count estimates and flags from the results summary for a plain-language result."""
         counts = None
         change = None
         try:
             if path.suffix.lower() == ".xlsx":
-                from openpyxl import load_workbook
-                wb = load_workbook(path, read_only=True, data_only=True)
-                ws = wb["Summary"] if "Summary" in wb.sheetnames else wb.active
-                rows = ws.iter_rows(values_only=True)
-                headers = [str(h) for h in next(rows)]
-                i_est = headers.index("Estimated New Product Price")
-                i_q = headers.index("Quality Flag")
-                i_big = next((i for i, h in enumerate(headers) if h.startswith("Price Change >")), None)
-                big = 0
-                n = est = ok = 0
-                for r in rows:
-                    n += 1
-                    if r[i_est] not in (None, ""):
-                        est += 1
-                    if str(r[i_q] or "").strip() == "OK":
-                        ok += 1
-                    if i_big is not None and i_big < len(r) and r[i_big] == "YES":
-                        big += 1
-                wb.close()
+                from results_format import internal_header, read_records
+                headers, records = read_records(path)
+                n = len(records)
+                est = sum(1 for r in records if r.get("Estimated New Product Price") not in (None, ""))
+                ok = sum(1 for r in records if str(r.get("Quality Flag") or "").strip() == "OK")
                 counts = dict(n=n, est=est, ok=ok, review=est - ok, none=n - est)
-                if i_big is not None:
-                    change = (big, headers[i_big].split(">")[-1].strip().rstrip("%"))
+                big_header = next((h for h in headers if internal_header(h) == "Large Price Change"), None)
+                if big_header is not None:
+                    limit = re.search(r"(\d+(?:[.,]\d+)?)\s*%", str(big_header))
+                    big = sum(1 for r in records if r.get("Large Price Change") == "YES")
+                    change = (big, limit[1] if limit else "")
         except Exception:
             pass
 

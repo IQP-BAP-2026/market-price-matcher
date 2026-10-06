@@ -13,75 +13,153 @@ class PriceCalculator(tk.Toplevel):
 
     def __init__(self, parent, product, apply):
         super().__init__(parent)
-        from price_robot_ui import C_BORDER, C_HEADER
+        from price_robot_ui import C_BG, C_BORDER, C_CARD, C_HEADER, C_ACCENT, C_ACCENT_DARK, C_MUTED, C_TEXT, FONT
         self.tr = parent.tr
         self.apply_price = apply
+        self._colors = {"border": C_BORDER, "focus": C_ACCENT, "bad": "#C62828", "value": C_ACCENT_DARK,
+                        "muted": C_MUTED, "text": C_TEXT}
         self.title(self.tr("Price calculator", "Calculadora de precios"))
         self.transient(parent.winfo_toplevel())
         self.resizable(False, False)
-        body = ttk.Frame(self, padding=16, style="Review.TFrame")
+        self.configure(bg=C_CARD)
+        soft = "#F0F5F0"   # same tint as the price boxes under the review table
+
+        # green title band, like the main window's header
+        header = tk.Frame(self, bg=C_HEADER, padx=20, pady=12)
+        header.pack(fill="x")
+        tk.Label(header, text=self.tr("Price calculator", "Calculadora de precios"), bg=C_HEADER, fg="white",
+                 font=(FONT, 13, "bold"), anchor="w").pack(fill="x")
+        tk.Label(header, text=product, bg=C_HEADER, fg="#CFE3D2", font=(FONT, 10), anchor="w", justify="left",
+                 wraplength=520).pack(fill="x", pady=(2, 0))
+
+        body = tk.Frame(self, bg=C_CARD, padx=20, pady=16)
         body.pack(fill="both", expand=True)
-        ttk.Label(body, text=product, wraplength=480, style="Review.TLabel").grid(
-            row=0, column=0, columnspan=2, sticky="w")
-        ttk.Label(body, text=self.tr("Space → next store · Enter → use average · Blank = no price",
-                                   "Espacio → siguiente tienda · Enter → usar promedio · Vacío = sin precio"),
-                  wraplength=480, style="ReviewMuted.TLabel").grid(
-            row=1, column=0, columnspan=2, sticky="w", pady=(4, 12))
-        sheet = tk.Frame(body, bg=C_BORDER, padx=1, pady=1)
-        sheet.grid(row=2, column=0, columnspan=2, sticky="ew")
+
+        # one box per store: a small label over a big "$ 0.00" field
+        stores = tk.Frame(body, bg=C_CARD)
+        stores.pack(fill="x")
         self.values, self.entries = [], []
         for index in range(4):
-            sheet.columnconfigure(index, weight=1, uniform="stores")
-            tk.Label(sheet, text=self.tr(f"Store {index + 1}", f"Tienda {index + 1}"),
-                     bg="#EAF0EA", fg=C_HEADER, font=parent.heading_font, pady=6).grid(
-                row=0, column=index, sticky="ew", padx=1, pady=1)
+            stores.columnconfigure(index, weight=1, uniform="stores")
+            box = tk.Frame(stores, bg=soft, padx=10, pady=8)
+            box.grid(row=0, column=index, sticky="ew", padx=(0 if index == 0 else 8, 0))
+            tk.Label(box, text=self.tr(f"STORE {index + 1}", f"TIENDA {index + 1}"), bg=soft, fg=C_MUTED,
+                     font=(FONT, 8, "bold"), anchor="w").pack(fill="x")
+            field = tk.Frame(box, bg="white", highlightthickness=1, highlightbackground=C_BORDER, highlightcolor=C_BORDER)
+            field.pack(fill="x", pady=(6, 0))
+            tk.Label(field, text="$", bg="white", fg=C_MUTED, font=(FONT, 13)).pack(side="left", padx=(8, 0))
             value = tk.StringVar(self)
-            entry = ttk.Entry(sheet, textvariable=value, width=10, justify="right", font=parent.body_font)
-            entry.grid(row=1, column=index, sticky="ew", padx=1, pady=1, ipady=6)
+            entry = tk.Entry(field, textvariable=value, width=7, justify="right", font=(FONT, 15, "bold"),
+                             relief="flat", bd=0, highlightthickness=0, bg="white", fg=C_TEXT,
+                             insertbackground=C_TEXT, selectbackground=C_HEADER, selectforeground="white")
+            entry.pack(side="left", fill="x", expand=True, padx=(4, 8), ipady=5)
             entry.bind("<space>", lambda event, i=index: self.advance(i))
             entry.bind("<Return>", lambda _: self.submit())
+            entry.bind("<FocusIn>", lambda _e: self._paint_fields(), add="+")
+            entry.bind("<FocusOut>", lambda _e: self.after_idle(self._paint_fields), add="+")
+            entry._field = field
             self.values.append(value)
             self.entries.append(entry)
             value.trace_add("write", lambda *_: self.update_average())
-        self.summary = ttk.Label(body, style="Review.TLabel", wraplength=480)
-        self.summary.grid(row=3, column=0, columnspan=2, sticky="w", pady=12)
-        buttons = ttk.Frame(body, style="Review.TFrame")
-        buttons.grid(row=4, column=0, columnspan=2, sticky="e")
-        ttk.Button(buttons, text=self.tr("Cancel", "Cancelar"), command=self.destroy).pack(side="left", padx=6)
+
+        tk.Label(body, text=self.tr("Leave a store blank if it doesn't sell the product.",
+                                    "Deje vacía la tienda que no vende el producto."),
+                 bg=C_CARD, fg=C_MUTED, font=(FONT, 9), anchor="w").pack(fill="x", pady=(6, 0))
+
+        # the result: a big average, and how many stores it uses (or what to fix)
+        result = tk.Frame(body, bg=soft, padx=14, pady=10)
+        result.pack(fill="x", pady=(12, 0))
+        tk.Label(result, text=self.tr("AVERAGE", "PROMEDIO"), bg=soft, fg=C_MUTED, font=(FONT, 8, "bold"),
+                 anchor="w").pack(fill="x")
+        line = tk.Frame(result, bg=soft)
+        line.pack(fill="x")
+        self.average_label = tk.Label(line, text="—", bg=soft, fg=C_ACCENT_DARK, font=(FONT, 22, "bold"))
+        self.average_label.pack(side="left")
+        self.summary = tk.Label(line, bg=soft, fg=C_MUTED, font=(FONT, 10), anchor="w", justify="left")
+        self.summary.pack(side="left", pady=(6, 0), fill="x")
+
+        bottom = tk.Frame(body, bg=C_CARD)
+        bottom.pack(fill="x", pady=(14, 0))
+        buttons = tk.Frame(bottom, bg=C_CARD)
+        buttons.pack(side="right")
+        ttk.Button(buttons, text=self.tr("Cancel", "Cancelar"), command=self.destroy).pack(side="left", padx=(0, 6))
         self.use_button = ttk.Button(buttons, text=self.tr("Use average", "Usar promedio"),
                                      style="ReviewAccent.TButton", command=self.submit)
         self.use_button.pack(side="left")
+
+        # keyboard help as small key caps along the bottom
+        footer = tk.Frame(self, bg=C_BG, padx=20, pady=8, highlightthickness=0)
+        footer.pack(fill="x")
+        for key, what in ((self.tr("Space", "Espacio"), self.tr("next store", "siguiente tienda")),
+                          ("Enter", self.tr("use average", "usar promedio")),
+                          ("Esc", self.tr("cancel", "cancelar"))):
+            tk.Label(footer, text=key, bg="white", fg=C_TEXT, font=(FONT, 8, "bold"), padx=5, pady=1,
+                     highlightthickness=1, highlightbackground=C_BORDER).pack(side="left")
+            tk.Label(footer, text=what, bg=C_BG, fg=C_MUTED, font=(FONT, 9)).pack(side="left", padx=(5, 16))
+
         self.bind("<Escape>", lambda _: self.destroy())
         self.bind("<Control-Return>", lambda _: self.submit())
         self.update_average()
         self.update_idletasks()
+        # fixed size, so the window doesn't change width as the message under the average changes
+        width, height = self.winfo_reqwidth(), self.winfo_reqheight()
+        self.summary.configure(wraplength=max(200, width - 200))
         owner = parent.winfo_toplevel()
-        self.geometry(f"+{owner.winfo_rootx() + max(0, (owner.winfo_width() - self.winfo_reqwidth()) // 2)}"
-                      f"+{owner.winfo_rooty() + max(0, (owner.winfo_height() - self.winfo_reqheight()) // 2)}")
+        self.geometry(f"{width}x{height}"
+                      f"+{owner.winfo_rootx() + max(0, (owner.winfo_width() - width) // 2)}"
+                      f"+{owner.winfo_rooty() + max(0, (owner.winfo_height() - height) // 2)}")
         self.grab_set()
         self.entries[0].focus_set()
+
+    def _price_ok(self, index):
+        text = self.values[index].get().strip()
+        return not text or valid_price(number(text.replace(",", ".")))
+
+    def _paint_fields(self):
+        """Green outline on the store being typed in, red on one that isn't a valid price."""
+        try:
+            focused = self.focus_get()
+        except (KeyError, tk.TclError):
+            focused = None
+        for index, entry in enumerate(self.entries):
+            if not entry.winfo_exists():
+                continue
+            color = (self._colors["bad"] if not self._price_ok(index)
+                     else self._colors["focus"] if entry is focused else self._colors["border"])
+            entry._field.configure(highlightbackground=color, highlightcolor=color,
+                                   highlightthickness=2 if color != self._colors["border"] else 1)
 
     def update_average(self):
         prices = []
         self.average = None
+        self._paint_fields()
         for value in self.values:
             text = value.get().strip()
             if not text:
                 continue
             price = number(text.replace(",", "."))
             if not valid_price(price):
+                self.average_label.configure(text="")
+                self.summary.pack_configure(padx=0)
                 self.summary.configure(text=self.tr("Enter a positive price or leave the store blank.",
-                                                    "Ingrese un precio positivo o deje la tienda vacía."))
+                                                    "Ingrese un precio positivo o deje la tienda vacía."),
+                                       fg=self._colors["bad"])
                 self.use_button.state(["disabled"])
                 return
             prices.append(price)
         if prices:
             self.average = round(sum(p / len(prices) for p in prices), REVIEW_PRICE_DECIMALS)
-            self.summary.configure(text=self.tr(
-                f"Average: ${self.average:.{REVIEW_PRICE_DECIMALS}f} · {len(prices)} stores",
-                f"Promedio: ${self.average:.{REVIEW_PRICE_DECIMALS}f} · {len(prices)} tiendas"))
+            self.average_label.configure(text=f"${self.average:.{REVIEW_PRICE_DECIMALS}f}")
+            self.summary.pack_configure(padx=(12, 0))
+            count = len(prices)
+            self.summary.configure(text=self.tr(f"from {count} store" + ("s" if count != 1 else ""),
+                                                f"de {count} tienda" + ("s" if count != 1 else "")),
+                                   fg=self._colors["muted"])
         else:
-            self.summary.configure(text=self.tr("Enter at least one store price.", "Ingrese el precio de al menos una tienda."))
+            self.average_label.configure(text="")
+            self.summary.pack_configure(padx=0)
+            self.summary.configure(text=self.tr("Enter at least one store price.", "Ingrese el precio de al menos una tienda."),
+                                   fg=self._colors["muted"])
         self.use_button.state(["!disabled"] if self.average is not None else ["disabled"])
 
     def advance(self, index):
@@ -165,7 +243,9 @@ class _ReviewView:
         _, _, available_width, available_height = work_area(self)
         width = min(round(1250 * scale), available_width - 60)
         height = min(round(850 * scale), available_height - 100)
-        self.compact = height / scale < 700
+        self._screen_compact = height / scale < 700
+        # also go compact when the window itself is short (e.g. not maximized), so the list keeps several rows
+        self.compact = self._screen_compact or self._short_window()
         if not getattr(self, "_built", False) and not self.embedded:
             fit_window(self, 1250, 850, 760, 560)
         self._built = True
@@ -245,6 +325,8 @@ class _ReviewView:
         self.type_filter.bind("<<ComboboxSelected>>", lambda _: self.refresh_list())
         ttk.Button(self.category_box, text=tr("Clear categories", "Limpiar categorías"), command=self.clear_categories).grid(row=2, column=1, sticky="e", pady=(gap, 0))
         self.bind("<Configure>", lambda e: self.position_categories() if e.widget is self and self.category_box.winfo_manager() else None)
+        self._compact_job = None
+        self.bind("<Configure>", lambda e: self._queue_compact_check() if e.widget is self else None, add="+")
         self.category_changed(refresh=False)
         # The product list takes all the spare height; the price boxes sit below it.
         frame = ttk.Frame(self, padding=1, style="Review.TFrame")
@@ -308,7 +390,7 @@ class _ReviewView:
                                                ("new", tr("NEW PRICE · ENTER ↵", "PRECIO NUEVO · ENTER ↵")),
                                                ("percent", tr("CHANGE %", "CAMBIO %")))):
             comparison.columnconfigure(index, weight=1, uniform="prices")
-            box = tk.Frame(comparison, bg="#F0F5F0", highlightbackground=C_BORDER, highlightthickness=1, padx=gap, pady=gap // 2)
+            box = tk.Frame(comparison, bg="#F0F5F0", highlightbackground=C_BORDER, highlightcolor=C_BORDER, highlightthickness=1, padx=gap, pady=gap // 2)
             box.grid(row=0, column=index, sticky="nsew", padx=(0 if index == 0 else gap, 0))
             tk.Label(box, text=label, font=(FONT, 8, "bold"), bg="#F0F5F0", fg=C_MUTED).pack(anchor="w")
             if key == "new":
@@ -353,8 +435,28 @@ class _ReviewView:
         ttk.Button(footer, text=tr("Export CSV…", "Exportar CSV…"), style="ReviewAccent.TButton", command=self.export).pack(side="right")
         self.refresh()
 
-    def set_language(self, lang):
-        if lang not in ("es", "en") or lang == self.session.lang:
+    def _short_window(self):
+        top = self.winfo_toplevel()
+        height = top.winfo_height()
+        return height > 1 and height / (self.unit / 17) < 760
+
+    def _queue_compact_check(self):
+        if self._compact_job:
+            self.after_cancel(self._compact_job)
+        self._compact_job = self.after(250, self._check_compact)
+
+    def _check_compact(self):
+        """Switch between the roomy and the compact layout when the window is resized past the limit."""
+        self._compact_job = None
+        try:
+            want = self._screen_compact or self._short_window()
+        except tk.TclError:
+            return
+        if want != self.compact:
+            self.set_language(self.session.lang, force=True)
+
+    def set_language(self, lang, force=False):
+        if lang not in ("es", "en") or (lang == self.session.lang and not force):
             return
         selected, focus = self.tree.selection(), self.tree.focus()
         scroll = self.tree.yview()[0]
@@ -369,11 +471,12 @@ class _ReviewView:
         categories_open = bool(self.category_box.winfo_manager())
         sort_key, sort_reverse = self.sort_key, self.sort_reverse
         self._cleanup_views()
-        for child in self.winfo_children():
-            child.destroy()
+        old = self.winfo_children()   # removed only once the new layout exists, so the screen never shows it empty
         self.session.lang = lang
         self.session.rescore()
         self._build()
+        for child in old:
+            child.destroy()
         self.score.set(score)
         self.filter.set(self.filter_values[decision])
         self.category_field.set(next(label for label, value in self.category_fields.items() if value == field))
@@ -525,6 +628,10 @@ class _ReviewView:
     def paint_percent_cells(self):
         """Treeview has row-only fonts; overlay just the visible percentage cells."""
         self._paint_job = None
+        if not self.tree.winfo_ismapped() or self.tree.winfo_height() <= 1:
+            # not laid out yet (e.g. right after a language switch): wait, so the overlays don't land in the wrong place
+            self._paint_job = self.after(20, self.paint_percent_cells)
+            return
         visible = []
         rows = set()
         rowheight = int(ttk.Style(self).lookup("Review.Treeview", "rowheight"))
@@ -562,7 +669,7 @@ class _ReviewView:
         for widget in (self.tree,):
             _SCROLL_VIEWS.pop(str(widget), None)
             _SCROLL_REMAINDER.pop(str(widget), None)
-        for job in (self._paint_job, self._drag_timer):
+        for job in (self._paint_job, self._drag_timer, getattr(self, "_compact_job", None)):
             if job:
                 self.after_cancel(job)
 
@@ -798,7 +905,7 @@ class _ReviewView:
         description = self.tr("Only accepted and manually approved prices will be exported.", "Solo se exportarán precios aceptados o aprobados manualmente.")
         if not messagebox.askyesno(self.window_title(), description + self.tr(f"\nPending products: {pending}. Continue?", f"\nProductos pendientes: {pending}. ¿Continuar?"), parent=self):
             return
-        path = filedialog.asksaveasfilename(parent=self, defaultextension=".csv", filetypes=[("CSV", "*.csv")], initialfile="salesforce_reviewed_prices.csv")
+        path = filedialog.asksaveasfilename(parent=self, defaultextension=".csv", filetypes=[("CSV", "*.csv")], initialfile="precios_revisados_salesforce.csv")
         if path:
             def save():
                 count = self.session.export(path)

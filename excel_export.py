@@ -10,30 +10,32 @@ from zipfile import ZipFile, ZIP_DEFLATED
 from openpyxl.utils import get_column_letter
 
 
-def prepare_candidates(ws, headers, rows, style_sheet):
-    """Keep only a width/style sample in the otherwise normal workbook."""
-    ws.append(headers)
-    for row in rows[:149]:
+def prepare_candidates(ws, table, style_sheet):
+    """Keep only a width/style sample in the otherwise normal workbook.
+
+    `table` is a results_format.Table: Spanish headers, rows converted on the fly, number formats and
+    the columns to hide."""
+    from results_format import finish_columns
+    ws.append(table.headers)
+    for row in table[:149]:
         ws.append(row)
     style_sheet(ws)
-    formats = {name: "$0.00" for name in ("Regular Price", "Final Price", "Chosen Price", "Price / kg")}
-    formats.update({name: "0.000" for name in ("Normalized kg", "Target Unit kg", "Candidate Unit kg")})
-    formats.update({"Discount %": "0.0%", "Size Ratio": "0.00x"})
-    for col, name in enumerate(headers, 1):
-        ws.cell(2, col).number_format = formats.get(name, "General")
+    finish_columns(ws, table)
+    for col, fmt in enumerate(table.formats, 1):
+        ws.cell(2, col).number_format = fmt
 
 
-def save_with_candidates(wb, destination, rows, progress=None):
+def save_with_candidates(wb, destination, rows, progress=None, sheet="Candidatos"):
     """Preserve normal-sheet styles/hooks; stream candidate XML into the XLSX ZIP.
 
     The staging file is replaced only after a successful save, so an export
     failure cannot truncate an existing results workbook.
     """
     destination = Path(destination)
-    ws = wb["Candidates"]
+    ws = wb[sheet]
     columns = [get_column_letter(i) for i in range(1, ws.max_column + 1)]
     styles = [ws.cell(2, i).style_id for i in range(1, len(columns) + 1)]
-    sheet_path = f"xl/worksheets/sheet{wb.sheetnames.index('Candidates') + 1}.xml"
+    sheet_path = f"xl/worksheets/sheet{wb.sheetnames.index(sheet) + 1}.xml"
     template = BytesIO()
     wb.save(template)
     extent = f"A1:{columns[-1]}{len(rows) + 1}"
@@ -50,7 +52,9 @@ def save_with_candidates(wb, destination, rows, progress=None):
                 data, suffix = data.split("</sheetData>", 1)
                 header = re.search(r"<row\b.*?</row>", data, re.S).group(0)
                 prefix = re.sub(r'<dimension ref="[^"]+"', f'<dimension ref="{extent}"', prefix)
-                suffix = re.sub(r'<autoFilter ref="[^"]+"', f'<autoFilter ref="{extent}"', suffix)
+                # keep the filter's columns (hidden columns may be left out of it); extend it to every row
+                suffix = re.sub(r'<autoFilter ref="([A-Z]+)1:([A-Z]+)\d+"',
+                                lambda m: f'<autoFilter ref="{m[1]}1:{m[2]}{len(rows) + 1}"', suffix)
                 with target.open(sheet_path, "w", force_zip64=True) as stream:
                     stream.write((prefix + "<sheetData>" + header).encode("utf-8"))
                     batch = []

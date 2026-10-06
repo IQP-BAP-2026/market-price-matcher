@@ -57,15 +57,20 @@ class CandidateStore:
         self.fingerprint = fingerprint
         if not self._valid():
             from openpyxl import load_workbook
+            from results_format import CANDIDATES_SHEET, find_sheet, internal_header, internal_record
             wb = load_workbook(results, read_only=True, data_only=True)
             try:
-                if "Candidates" not in wb.sheetnames:
+                ws = find_sheet(wb, CANDIDATES_SHEET)
+                if ws is None:
                     self.counts = {}
                     self.path = None
                     return
-                rows = wb["Candidates"].iter_rows(values_only=True)
-                headers = list(next(rows))
-                build_candidate_index(results, headers, rows, fingerprint)
+                rows = ws.iter_rows(values_only=True)
+                sheet_headers = list(next(rows))
+                # back to the internal column names and values (the sheet is in Spanish)
+                headers = [internal_header(h) for h in sheet_headers]
+                values = ([internal_record(sheet_headers, row).get(h) for h in headers] for row in rows)
+                build_candidate_index(results, headers, values, fingerprint)
             finally:
                 wb.close()
         with closing(sqlite3.connect(self.path)) as db:

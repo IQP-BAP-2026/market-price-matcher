@@ -1,7 +1,46 @@
 """Shared header-based current-price input for comparison and human review."""
 import csv
+import io
 import math
 from pathlib import Path
+
+# Excel and Salesforce save CSV files in different ways: UTF-8 (with or without a BOM), "Unicode text"
+# (UTF-16), or the Windows code page (cp1252) — where "ñ" and accented letters are single bytes that
+# aren't valid UTF-8 ("invalid continuation byte"). Spanish-language Excel also separates columns with
+# ";" and writes decimals with a comma (5,02).
+_TEXT_ENCODINGS = ("utf-8-sig", "cp1252", "latin-1")
+
+
+def is_spreadsheet(path):
+    """True for an Excel workbook (.xlsx/.xlsm are ZIP files), whatever the file is called. An old .xls
+    workbook can't be read: ask for it to be saved as .xlsx or .csv."""
+    with open(path, "rb") as stream:
+        start = stream.read(8)
+    if start.startswith(b"\xd0\xcf\x11\xe0"):
+        raise ValueError(f"{Path(path).name} is an old Excel (.xls) file. Open it in Excel and save it as "
+                         ".xlsx (Excel workbook) or .csv, then choose it again.")
+    return start.startswith(b"PK")
+
+
+def read_text_table(path):
+    """(rows, decimal_comma) of a CSV/text file in any of the encodings and separators Excel uses."""
+    raw = Path(path).read_bytes()
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        text = raw.decode("utf-16")
+    else:
+        for encoding in _TEXT_ENCODINGS:
+            try:
+                text = raw.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+    sample = text[:20000]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel
+    rows = list(csv.reader(io.StringIO(text, newline=""), dialect))
+    return rows, dialect.delimiter == ";"
 
 
 def product_code(value):
@@ -10,11 +49,22 @@ def product_code(value):
     return str(int(value)) if isinstance(value, float) and value.is_integer() else str(value).strip()
 
 
-def money(value):
+def money(value, decimal_comma=False):
+    """A price from a cell: 5.02, "$5.02", "1,234.50" — or, with decimal_comma (Spanish-format CSV),
+    "5,02" and "1.234,50"."""
     try:
         if isinstance(value, bool):
             return None
-        result = float(str(value).replace("$", "").replace(",", "").strip())
+        if isinstance(value, (int, float)):
+            result = float(value)
+        else:
+            text = str(value).replace("$", "").replace("\u00a0", "").replace(" ", "").strip()
+            if "," in text and "." in text:      # both: the last one is the decimal separator
+                comma_decimal = text.rfind(",") > text.rfind(".")
+            else:                                  # only a comma: decimal in Spanish-format files
+                comma_decimal = decimal_comma and "," in text
+            text = text.replace(".", "").replace(",", ".") if comma_decimal else text.replace(",", "")
+            result = float(text)
         return result if math.isfinite(result) else None
     except (TypeError, ValueError):
         return None
@@ -27,11 +77,10 @@ def read_current_rows(path):
     IDs are PricebookEntry IDs from the input, never product codes or product IDs.
     """
     path = Path(path)
-    if path.suffix.lower() == ".csv":
-        with path.open(encoding="utf-8-sig", newline="") as stream:
-            reader = csv.reader(stream)
-            headers = next(reader, [])
-            values = list(reader)
+    decimal_comma = False
+    if not is_spreadsheet(path):   # CSV / text, whatever its extension
+        rows, decimal_comma = read_text_table(path)
+        headers, values = (rows[0], rows[1:]) if rows else ([], [])
     else:
         from openpyxl import load_workbook
         wb = load_workbook(path, read_only=True, data_only=True)
@@ -68,7 +117,7 @@ def read_current_rows(path):
         if identifier:
             ids.add(identifier)
         raw_price = row.get(price_field)
-        price = money(raw_price)
+        price = money(raw_price, decimal_comma)
         if raw_price not in (None, "") and (price is None or price < 0):
             raise ValueError(f"Invalid UnitPrice for ProductCode {key}: {raw_price}")
         row.update({"Código de producto": key, "Nombre del producto": row.get(name_field),
@@ -128,9 +177,9 @@ def product_columns_missing(path):
 def current_prices_columns_missing(path):
     """Required columns missing from the current-prices file ([] = fine), as 'ProductCode / Código de producto'."""
     path = Path(path)
-    if path.suffix.lower() == ".csv":
-        with path.open(encoding="utf-8-sig", newline="") as stream:
-            headers = next(csv.reader(stream), [])
+    if not is_spreadsheet(path):
+        rows, _ = read_text_table(path)
+        headers = rows[0] if rows else []
     else:
         from openpyxl import load_workbook
         wb = load_workbook(path, read_only=True, data_only=True)

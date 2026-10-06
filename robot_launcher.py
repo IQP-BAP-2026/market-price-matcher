@@ -26,7 +26,6 @@ It also works by hand, e.g.:
 from __future__ import annotations
 
 import atexit
-import csv
 import json
 import os
 import sys
@@ -207,84 +206,37 @@ def _output_path() -> Path:
     return path if path.is_absolute() else pr.BASE_DIR / path
 
 
-def _add_columns_to_results(path: Path, comparison: dict, threshold: float) -> None:
-    """Add Current BAP Price / % Difference / Large Price Change to the main results file."""
-    new_headers = ["Current BAP Price", "% Difference vs Current", f"Price Change > {threshold:.0%}", "Salesforce Id"]
-    if path.suffix.lower() == ".csv":
-        with path.open(encoding="utf-8-sig", newline="") as f:
-            rows = list(csv.reader(f))
-        if not rows:
-            return
-        i_row = rows[0].index("Spreadsheet Row")
-        rows[0] += new_headers
-        for r in rows[1:]:
-            cur, diff, big, sf_id = comparison.get(str(r[i_row]).strip(), (None, None, "", ""))
-            r += ["" if cur is None else f"{cur:.2f}", "" if diff is None else f"{diff:.1%}", big, sf_id]
-        with path.open("w", encoding="utf-8-sig", newline="") as f:
-            csv.writer(f).writerows(rows)
-        return
-
-    from openpyxl import load_workbook
-    wb = load_workbook(path)
-    _add_columns_to_workbook(wb, comparison, threshold)
-    wb.save(path)
-
-
-def _add_columns_to_workbook(wb, comparison: dict, threshold: float) -> None:
-    """Add the comparison columns (and each product's Salesforce Id, so the results file can be reviewed and
-    exported on its own) to the Summary sheet of an open workbook."""
-    from openpyxl.styles import Font, PatternFill
-    new_headers = ["Current BAP Price", "% Difference vs Current", f"Price Change > {threshold:.0%}", "Salesforce Id"]
-    ws = wb["Summary"] if "Summary" in wb.sheetnames else wb.active
-    headers = [c.value for c in ws[1]]
-    i_row = headers.index("Spreadsheet Row") + 1
-    first = ws.max_column + 1
-    header_fill = copy(ws.cell(1, 1).fill)
-    header_font = copy(ws.cell(1, 1).font)
-    for j, h in enumerate(new_headers):
-        c = ws.cell(1, first + j, h)
-        c.fill, c.font = header_fill, header_font
-        ws.column_dimensions[c.column_letter].width = 18
-    flag_fill = PatternFill("solid", fgColor="FDE2C4")
-    for r in range(2, ws.max_row + 1):
-        cur, diff, big, sf_id = comparison.get(str(ws.cell(r, i_row).value).strip(), (None, None, "", ""))
-        ws.cell(r, first, cur).number_format = "$0.00"
-        ws.cell(r, first + 3, sf_id or None)
-        ws.cell(r, first + 1, diff).number_format = "+0.0%;-0.0%;0.0%"
-        c = ws.cell(r, first + 2, big)
-        if big == "YES":
-            c.fill = flag_fill
-            c.font = Font(bold=True, color="9A3412")
-            ws.cell(r, first + 1).fill = flag_fill
-
-
 def _mark_performance_workbook(wb, comparison: dict, threshold: float) -> None:
     """Mark large price changes for manual review in the performance analysis (open workbook)."""
     from openpyxl.styles import Font, PatternFill
-    ws = wb["Product Analysis"]
-    headers = [c.value for c in ws[1]]
+    import results_format as rf
+    ws = rf.find_sheet(wb, rf.ANALYSIS_SHEET)
+    if ws is None:
+        return
+    headers = [rf.internal_header(c.value) for c in ws[1]]
     if "Needs Manual Review" not in headers:
         return
     i_review = headers.index("Needs Manual Review") + 1
     i_row = headers.index("Spreadsheet Row") + 1
     i_flag = headers.index("Quality Flag") + 1
     reason_col = ws.max_column + 1
-    head = ws.cell(1, reason_col, "Review Reason")
+    head = ws.cell(1, reason_col, rf.header_es("Review Reason"))
     head.fill, head.font = copy(ws.cell(1, 1).fill), copy(ws.cell(1, 1).font)
+    head.alignment = copy(ws.cell(1, 1).alignment)
     ws.column_dimensions[head.column_letter].width = 42
     flag_fill = PatternFill("solid", fgColor="FDE2C4")
     for r in range(2, ws.max_row + 1):
         reasons = []
         quality = str(ws.cell(r, i_flag).value or "")
         if quality != "OK":
-            reasons.append(f"Quality: {quality}")
+            reasons.append(rf.alerts_es(quality))
         _cur, diff, big, _id = comparison.get(str(ws.cell(r, i_row).value).strip(), (None, None, "", ""))
         if big == "YES":
-            reasons.append(f"Price change {diff:+.0%} vs current (limit ±{threshold:.0%})")
-            cell = ws.cell(r, i_review, "YES")
+            reasons.append(f"Cambio de precio de {diff:+.0%} frente al actual (límite ±{threshold:.0%})")
+            cell = ws.cell(r, i_review, rf.value_es("Needs Manual Review", "YES"))
             cell.fill = flag_fill
             cell.font = Font(bold=True, color="9A3412")
-        ws.cell(r, reason_col, " | ".join(reasons))
+        ws.cell(r, reason_col, " · ".join(x for x in reasons if x))
 
 
 def check_current_prices_file() -> None:
@@ -333,12 +285,18 @@ def apply_current_prices_choice() -> None:
             flag = "YES" if diff is not None and abs(diff) > threshold else ""
             comparison[str(row[hi["Spreadsheet Row"]]).strip()] = (cur, diff, flag, ids.get(key, ""))
 
-    def results_hook(wb, summary_headers, summary_rows):
-        # Add the comparison columns while the results workbook is still in memory
-        # (much faster than opening the saved file again).
+    def summary_hook(summary_headers, summary_rows):
+        # Add each product's current price, the % difference, the big-change mark and its Salesforce Id
+        # (so the results file can be reviewed and exported on its own) before anything is written.
         try:
             build_comparison(summary_headers, summary_rows)
-            _add_columns_to_workbook(wb, comparison, threshold)
+            import results_format as rf
+            rf.CHANGE_LIMIT = threshold
+            i_row = summary_headers.index("Spreadsheet Row")
+            summary_headers.extend(["Current BAP Price", "% Difference vs Current", "Large Price Change", "Salesforce Id"])
+            for row in summary_rows:
+                cur, diff, big, sf_id = comparison.get(str(row[i_row]).strip(), (None, None, "", ""))
+                row.extend([cur, diff, big, sf_id or None])
             state["added"] = True
         except Exception as exc:
             print(f"[PRICE CHANGE] Could not add the price comparison to the results: {exc!r}")
@@ -353,11 +311,8 @@ def apply_current_prices_choice() -> None:
             big = sum(1 for v in comparison.values() if v[2] == "YES")
             print(f"[PRICE CHANGE] {big} product(s) differ from the current BAP price by more than "
                   f"±{threshold:.0%} and are marked for review.")
-            if not state["added"]:          # CSV output: add the columns to the saved file
-                _add_columns_to_results(_output_path(), comparison, threshold)
-            print(f"[PRICE CHANGE] Added current price and % difference to {_output_path().name}")
-        except PermissionError:
-            print(f"[PRICE CHANGE] Could not update {_output_path().name}: it is open in Excel.")
+            if state["added"]:
+                print(f"[PRICE CHANGE] Added current price and % difference to {_output_path().name}")
         except Exception as exc:
             print(f"[PRICE CHANGE] Could not add the price comparison to the results: {exc!r}")
         return result
@@ -373,7 +328,7 @@ def apply_current_prices_choice() -> None:
         return original_analysis(*args, current_prices_file=target, **kwargs)
 
     if chosen:
-        pr.RESULTS_WORKBOOK_HOOKS.append(results_hook)
+        pr.SUMMARY_HOOKS.append(summary_hook)
         pr.PERFORMANCE_WORKBOOK_HOOKS.append(performance_hook)
     pr.compare_current_prices = compare
     pr.create_performance_analysis = analysis

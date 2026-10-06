@@ -6,7 +6,7 @@ a = Analysis(
     [str(root / "desktop_entry.py")],
     pathex=[str(root)],
     binaries=[],
-    datas=[],
+    datas=[(str(root / "assets"), "assets")],   # header photos (and the icon)
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -17,7 +17,8 @@ a = Analysis(
 pyz = PYZ(a.pure)
 exe = EXE(
     pyz, a.scripts, a.binaries, a.datas, [],
-    name="PriceRobot", debug=False, bootloader_ignore_signals=False,
+    name="RobotDePrecios", debug=False, bootloader_ignore_signals=False,
     strip=False, upx=False, console=False,
     version=str(root / "windows_version.txt"),
+    icon=str(root / "assets" / "app_icon.ico"),
 )
